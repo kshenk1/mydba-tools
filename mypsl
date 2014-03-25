@@ -1,0 +1,531 @@
+#!/usr/bin/perl -w
+###########################################################################
+##
+## Author:          Kyle Shenk
+## Creation Date:   2009 or something
+## Purpose:         Parse the process list without having to go bonkers with awk/sed n stuff 
+##
+## WARNING:         Use caution with this if you attempt to kill queries, and read the usage section.
+## If you have any questions or are unsure of what you're doing, chances are you shouldn't be doing it :-)
+##
+## Remember, killing anything besides a SELECT query is like playing with fire - do so at your own risk.
+##
+## This assumes you'll be running this ON the actual mysql server (localhost).
+## If we want to run this from another server, a couple tweaks need to be made to make that happen....
+## Making it so you must run this from the server makes it a bit more solid so it's not so easy to run amock
+## on the production servers by accident.
+## 
+
+## TODO: Use strict as well...
+use warnings;
+
+use Getopt::Long;
+use DBI;
+
+## if the user aborts, call this function to clean up stuff.
+$SIG{'INT'} = 'EXIT_cleanup';
+
+my $hostname                = `hostname`;
+chomp($hostname);
+
+## most of these are explained below in help,
+## but here's the defaults
+my $id_only                 = 0;    ## Boolean, on or off
+my $loop_second_interval    = 0;    ## Integer, refresh rate
+my $time_s                  = 0;    ## Time in seconds
+my $help                    = 0;    ## see usage
+my $stats                   = 0;    ## Show stats instead of processes
+my $debug                   = 0;    ## Debug mode, not really implemented....
+my $dft                     = 0;    ## run with default, or most common usage parameters
+## So if we really need to kill stuff, it will be easiest to do it in this script.
+## putting the kill in here allows us to use the same connection to the database
+## that was already established to to get the ids to kill.
+my $kill                    = 0;    ## Be careful, take out the queries that match your parameters
+my $kill_log_on             = 0;    ## This is used to control whether we can successfully write a kill log or not.
+my $query_log_on            = 0;    ## this is used to control whether we can write a query log or not.
+my $kill_count              = 0;    ## how many did we get? :-)
+my $kill_threshold          = 500;  ## IF YOU DON'T OVERRIDED THIS, then we'll have to hit this many connections before we'll kill your queries;
+                                    ## if you set this to "off", "-kt off", then we'll kill regardless of connections.
+                                    
+my $kill_all                = 0;    ## If the flag for this is given "-ka", then we will attempt to kill everything, not only select queries.
+my $log_pslist              = 0;    ## if this is provided, we'll log the process list as opposed to streaming it to the terminal.
+my $log_threshold           = 'off';## by default there is no log threshold, set this to a "connection" number to reach to start logging when 
+                                    ## connections reach this level.
+my $kill_yes                = 0;
+                                    
+my $threads_connected       = 0;
+my @stats;
+my @where;
+my $where_str               = '';
+my $user                    = '';
+my $host                    = '';
+my $database                = '';
+my $command                 = '';
+my $state                   = '';
+my $query                   = '';
+my $order_by                = '';
+my $order_by_str            = '';
+my $sql                     = '';
+my $ps_list_format          = "%-12d%-15s%-20s%-28s%-25s%-7d%-28s%-25s\n";
+my $ps_list_format_header   = "%-12s%-15s%-20s%-28s%-25s%-7s%-28s%-25s\n";
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst);
+my $num_locked              = 0;
+my $num_opening             = 0;
+my $num_closing             = 0;
+my $num_reads               = 0;
+my $num_writes              = 0;
+my $disk_reads              = 0;
+my $disk_writes             = 0;
+my $long_query_time         = 0;
+my $num_past_long_query     = 0;
+my $ignore_backtrace        = 0;
+my $log_base                = '/var/log';   ## the base dir for where we'll place logs when we need to
+my $mysql_config            = '/etc/mysql/conf.d/my.cnf';
+my $mysql_port              = 3306;
+
+GetOptions(
+    "i"     => \$id_only,
+    "help"  => \$help,
+    "stats" => \$stats,
+    "debug+"=> \$debug,
+    "dft"   => \$dft,
+    "kill"  => \$kill,
+    "kt=s"  => \$kill_threshold,        ## this says string here because it's used for a integer as well as "off"
+    "ky"    => \$kill_yes,
+    "lt=s"  => \$log_threshold,
+    "ka"    => \$kill_all,
+    "log"   => \$log_pslist,
+    "l=i"   => \$loop_second_interval,
+    "b"     => \$ignore_backtrace, 
+    "u=s"   => \$user,
+    "h=s"   => \$host,
+    "d=s"   => \$database,
+    "c=s"   => \$command,
+    "t=i"   => \$time_s,
+    "s=s"   => \$state,
+    "q=s"   => \$query,
+    "o=s"   => \$order_by);
+
+usage() if ($help == 1);
+usage("You cannot do both id only and stats") if ($id_only == 1 && $stats == 1);
+
+if ($kill == 1 && $dft == 1) {
+    print "ERROR: You cannot kill with defaults!\n";
+    exit 1;
+}
+
+if ($kill == 1 && $log_pslist == 1) {
+    print "WARNING: Killing queries automatically logs them\n";
+    exit 1;
+}
+
+my $db_user = 'root';
+my $db_pass = '';
+
+## let's get the port mysql is running on (even tho most of the time it's going to be 3306)
+## but, we can't do this if the my.cnf isn't where we expect it...
+if (-e $mysql_config) {
+    my $my_print_defaults   = `which my_print_defaults`;
+    chomp($my_print_defaults);
+    die("Cannot find my_print_defaults!") if ($my_print_defaults eq "");
+    print "Using my_print_defaults @ $my_print_defaults\n" if ($debug > 0);
+    $mysql_port          = `$my_print_defaults --defaults-file=$mysql_config mysqld | awk -F= ' \$1 ~/^\-\-port/ { print \$2 } '`;
+    chomp($mysql_port);
+    if ($mysql_port eq "") {
+        print "Defaulting port to: 3306\n" if ($debug > 0);
+        $mysql_port         = 3306;
+    } else {
+        print "Located port: $mysql_port\n" if ($debug > 0);
+    }
+} else {
+    ## this is probably local then...
+    print "File: $mysql_config not found...\n" if ($debug > 0);
+    print "Defaulting port to: 3306\n" if ($debug > 0);
+    $mysql_port = 3306;
+}
+
+print "Using db user: $db_user\n" if ($debug > 0);
+
+## only select the right stuff....default, select it all.
+$sql = "SELECT id, user, host, db, command, time, state, info";
+$sql = "SELECT id" if ($id_only == 1 && $kill == 0);
+
+$sql .= " FROM processlist";
+
+## the default can be used for killing as well, though it's 
+## recommended to add more to the criteria.
+if ($dft == 1) {
+    push(@where, "(command LIKE 'Query' OR command LIKE 'Connect')");
+    $order_by = "time ASC, id ASC";
+    $loop_second_interval = 3;
+} else {
+    ## "where up" our stuff if we specified anything
+    push(@where, "user = '$user'")          if ($user ne "");
+    push(@where, "host = '$host'")          if ($host ne "");
+    push(@where, "time >= $time_s")         if ($time_s > 0);
+    push(@where, "db = '$database'")        if ($database ne "");
+    push(@where, "command LIKE '$command'") if ($command ne "");
+    push(@where, "state LIKE '$state'")     if ($state ne "");
+    push(@where, "info LIKE '$query%'")     if ($query ne "");
+}
+
+## this requires a little sanity checking....
+if ($kill == 1) {
+    ## if we plan to kill and you haven't used any arguments, go no further.
+    if (scalar(@where) < 1) {
+        print "You must specify criteria if you plan on killing queries...\n";
+        exit 1;
+    }
+
+    if ($kill_yes != 1) {
+        print "\nAre you sure you want to kill queries?? (y/n): ";
+        $answer = <>;
+            if ($answer !~ m/^y(es)?/i) {
+            print "\nOk, only use \"-kill\" when you want to kill stuff...\n\n";
+            exit 0;
+        }
+    }
+
+    my $kill_log = "$log_base/mysql_kill.log";
+    if (open(KILL_LOG, ">>$kill_log")) {
+        ## if we're able to open this for appending, flip this variable so it's easy for us to check later.
+        $kill_log_on = 1;
+        print "\nSetting logfile to: $kill_log\n";
+    } else {
+        print "\nWARNING: Unable to write to the kill log: $kill_log, but we'll kill queries anyway...\n" if ($kill_log_on == 0);
+    }
+    print "  NOTICE: There is no need to use -i with -kill\n" if ($id_only == 1);
+    print " WARNING: KILL IS ON! Seeking and Destroying queries!\n";
+    print " WARNING: flag -ka was provided. We'll attempt to kill everything, NOT ONLY select queries!\n" if ($kill_all == 1); 
+    print "Criteria: WHERE ", join(' AND ', @where), "\n";
+}
+
+if ($log_pslist == 1 ) {
+    my $query_log = "$log_base/mypsl_queries.log";
+    if (open(QUERY_LOG, ">>$query_log")) {
+        ## if we're able to open this for appending, flip this variable so it's easy for us to check later.
+        $query_log_on = 1;
+        print "\nSetting logfile to: $query_log\n";
+    } else {
+        if ($query_log_on == 0) {
+            print "\nERROR: Unable to write to the query log: $query_log\n";
+            exit 1;
+        }
+    }
+}
+
+## Ignore replication
+push(@where, "command != 'Binlog Dump'");
+
+## and don't include the query we are running
+push(@where, "db != 'information_schema'");
+#push(@where, "user != '$db_user'");
+
+## this looked good at first, but if anything is running from localhost, we've just filtered it out.
+## I noticed this while I was running a fat alter statement on the server as myself.... my query never showed up
+## in the processlist which is quite misleading!! :)
+#push(@where, "host != 'localhost'");
+
+$where_str      = join(" AND ", @where);
+$order_by_str   = ($order_by ne "" ? $order_by : "time ASC, id ASC");
+
+$sql .= " WHERE $where_str" if ($where_str ne "");
+$sql .= " ORDER BY $order_by_str" if ($order_by_str ne "");
+
+print "Final SQL: $sql\n" if ($debug > 0);
+
+my $dsn = "dbi:mysql:information_schema:localhost:$mysql_port";
+my $dbh = DBI->connect($dsn, $db_user, $db_pass) or die("Cannot connect to the server as $db_user!");
+my $sth = $dbh->prepare($sql); 
+
+## let's pull the long_query_time out of the database instead of the config
+## this can always be changed on the fly
+if ($kill == 0) {
+    my $qtsql = "SHOW VARIABLES LIKE 'long_query_time'";
+    my $qtsth = $dbh->prepare($qtsql);
+    $qtsth->execute();
+    if ($row = $qtsth->fetchrow_hashref()) {
+        $long_query_time = $row->{Value} ? int($row->{Value}) : 0;
+    }
+    $qtsth->finish();
+}
+
+print "Long Query Time: $long_query_time" if ($debug > 0);
+
+## if we're looping, just do that until the user aborts...
+my $_loop_counter = 0;
+if ($loop_second_interval > 0) {
+    while (1) {
+        $_loop_counter++;
+        $threads_connected = getConnectedThreads() if ($kill == 1 || $log_pslist == 1);
+        pslist();
+        
+        ## print a little message just to show this is still alive....
+        print "\n\t\t...still working...\n" if ($kill == 1 && ($_loop_counter % 10 == 0) && $kill_count == 0);
+        
+        sleep $loop_second_interval;
+    }
+} else {
+    $threads_connected = getConnectedThreads() if ($kill == 1 || $log_pslist == 1);
+    pslist();
+}
+
+EXIT_cleanup();
+
+exit 0;
+
+## get and display the process list
+sub pslist {
+    ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time) if ($id_only == 0 || $kill == 1);
+
+    if ($id_only == 0 && $kill == 0 && $log_pslist == 0) {
+        print "\n", "-"x30;
+        printf " $hostname: %4d-%02d-%02d %02d:%02d:%02d ",$year+1900,$mon+1,$mday,$hour,$min,$sec;
+        print "-"x30, "\n";
+        printf "$ps_list_format_header", "ID","USER","HOST","DB","COMMAND","TIME","STATE","INFO\n" if ($stats == 0);
+    }
+    
+    $sth->execute();
+    # zero everything out - we could be in a loop and want totals per cycle
+    $num_locked     = $num_opening = $num_closing = $num_reads = $num_writes = $num_past_long_query = $disk_reads = $disk_writes = $kill_count = 0;
+    
+    L_PSROW: while ($row = $sth->fetchrow_hashref()) {
+        ######################## Kill Block
+        if ($kill == 1) {
+            if ($kill_threshold =~ m/^off$/i) {
+                $kill_count++ if (myKill() == 0);
+            } else {
+                if ($threads_connected > $kill_threshold) {
+                    $kill_count++ if (myKill() == 0);
+                }
+            }
+            next L_PSROW;
+        }
+        ######################## Kill Block
+        
+        if ($id_only == 1) {
+            ## if we've specified to print the ID only, that is all we need to do this round...
+            print "$row->{id}\n";
+            next L_PSROW;
+        }
+        
+        processRow();
+        
+        if ($log_pslist == 1) {
+            if ($log_threshold =~ m/^off$/i || $threads_connected >= $log_threshold) {
+                ## Set this if nothing is there - otherwise we blow a warning when printing 
+                $row->{info} = "NO QUERY FOUND IN THIS FIELD" if (!defined($row->{info}) || $row->{info} eq "");
+                local $mydate = sprintf("%4d-%02d-%02d %02d:%02d:%02d", $year+1900,$mon+1,$mday,$hour,$min,$sec);
+                ## Log it
+                print QUERY_LOG "##DATE: ", $mydate, " ##ID: ", $row->{id}, " ##USER: ", $row->{user}, " ##HOST: ", $row->{host}, " ##DB: ", $row->{db},
+                    " ##COMMAND: ", $row->{command}, " ##TIME: ", $row->{time}, " ##STATE: ", $row->{state}, " ##INFO: ", $row->{info}, " ##\n" if ($query_log_on == 1);
+            }
+            next L_PSROW;
+        }
+        
+        printf "$ps_list_format", $row->{id}, $row->{user}, $row->{host}, $row->{db}, $row->{command}, $row->{time}, $row->{state}, $row->{info} if ($stats == 0);
+    }
+    $sth->finish();
+    
+    if ($stats == 1) {
+        diskops();
+        printstats();
+    } else {
+        if ($id_only == 0 && $kill == 0 && $log_pslist == 0) {
+            print "\n\t($hostname) PROCESSES: ", $sth->rows(), ", LOCKED: ", $num_locked, ", READS: ", $num_reads, ", WRITES: ", $num_writes, 
+                ", CLOSING: $num_closing, OPENING: $num_opening, PAST LQT: $num_past_long_query", ($num_past_long_query > 0 ? " ($long_query_time)" : ""), 
+                "\n\n";
+        }
+    }
+    if ($kill == 1 && $kill_count > 0) {
+        print "\tKill Count: $kill_count\n\n";
+    }
+}
+
+## this is called when the script exits normally, or when a user aborts.
+sub EXIT_cleanup {
+    print "\tcleaning up...\n";
+    ## close the kill log if it's open
+    close (KILL_LOG) if ($kill_log_on == 1 && tell(KILL_LOG) != -1);
+    close (QUERY_LOG) if ($query_log_on == 1 && tell(QUERY_LOG) != -1);
+    $dbh->disconnect() if ($dbh->ping());
+    exit(0);
+}
+
+sub myKill {
+    ## If the flag to kill all queries wasn't given, only allow this to kill select queries.
+    if ($kill_all == 0) {
+        if (trim($row->{info}) !~ m/^select/i) {
+            print "WARNING: Only permitting killing of SELECT queries at this time,\n\tskipping: ", substr($row->{info}, 0, 50), "\n";
+            return 1;
+        }
+    }
+    local $kill_id      = $row->{id};
+    local $kill_sth     = $dbh->prepare("KILL $kill_id");
+    if (!$kill_sth->execute()) {
+        print "ERROR: Unable to kill: $kill_id";
+        print "ERROR: ", $kill_sth->errstr;
+        return 1;
+    }
+    $kill_sth->finish();
+    local $mydate = sprintf("%4d-%02d-%02d %02d:%02d:%02d", $year+1900,$mon+1,$mday,$hour,$min,$sec);
+
+    ## Set this if nothing is there - otherwise we blow a warning when printing 
+    $row->{info} = "NO QUERY FOUND IN THIS FIELD" if (!defined($row->{info}) || $row->{info} eq "");
+
+    ## and only print the first 100 characters of the query to the terminal.
+    printf "%-20s -> %-22s -> %-100s\n", $mydate, "Killed: $kill_id", substr($row->{info}, 0, 100);
+    
+    ## Log it
+    print KILL_LOG "##KILL DATE: ", $mydate, " ##ID: ", $kill_id, " ##USER: ", $row->{user}, " ##HOST: ", $row->{host}, " ##DB: ", $row->{db},
+        " ##COMMAND: ", $row->{command}, " ##TIME: ", $row->{time}, " ##STATE: ", $row->{state}, " ##INFO: ", $row->{info}, " ##\n" if ($kill_log_on == 1);
+    return 0;
+}
+
+sub getConnectedThreads {
+    local $tc = 0;
+    
+    ## commented this out for now.
+    #return $tc if ($kill_threshold =~ m/^off$/i || $log_threshold =~ m/^off$/i);
+    
+    local $ksql = "SHOW GLOBAL STATUS LIKE 'Threads_connected'";
+    local $ksth = $dbh->prepare($ksql);
+    $ksth->execute();
+    if ($row = $ksth->fetchrow_hashref()) {
+        $tc = $row->{Value} ? int($row->{Value}) : 0;
+    }
+    $ksth->finish();
+        
+    return $tc;
+}
+
+sub processRow {
+    ## so ok.... if you do "show full processlist", you will see "localhost" for ones
+    ## that appear to be null when doing this thru the DBI module.
+    $row->{host}    = "localhost?" if (!defined($row->{host}) || $row->{host} eq "");
+    $row->{info}    = "" if !defined($row->{info});
+    $row->{db}      = "NULL" if !defined($row->{db});
+    $row->{state}   = "NULL" if !defined($row->{state});
+
+    if ($ignore_backtrace == 1) {
+        $row->{info} =~ s#/\*.*?\*/##sg;
+    }
+    
+    ## getting some totals...
+    $num_reads++    if ($row->{info} =~ m/^SELECT/i);
+    $num_writes++   if ($row->{info} =~ m/^(INSERT|UPDATE|CREATE|ALTER|REPLACE|RENAME|DELETE)/i);
+    
+    ## this is a slight bug in calculation of the number of writes we're currently performing.
+    ## I think we only want to increment num_writes IF we meet the conditions above for "info".
+    ## If state is copy(ing) to tmp table, that doesn't mean the database performed a "write" operation per say.....
+    #$num_writes++  if ($row->{state} =~ m/^copy(ing)? to tmp table/i);
+    $num_locked++   if ($row->{state} =~ m/^(locked|waiting for table level lock|waiting for table metadata lock)$/i);
+    $num_opening++  if ($row->{state} =~ m/^opening table/i);
+    $num_closing++  if ($row->{state} =~ m/^closing table/i);
+    $num_past_long_query++ if ($row->{time} >= $long_query_time);
+}
+
+## this was a tad weird on zfs - might work on xfs...
+sub printstats {
+    print "\nWARNING: kb reads/writes is static right now for some reason - i.e. not working\n";
+    print "\n\t       PROCESSES: ", $sth->rows(), "\n";
+    print "\t          LOCKED: $num_locked\n";
+    print "\t     MYSQL READS: $num_reads\n";
+    print "\t    MYSQL WRITES: $num_writes\n";
+    print "\t         CLOSING: $num_closing\n";
+    print "\t         OPENING: $num_opening\n";
+    print "\t kb writes/s avg: $disk_reads\n";
+    print "\t  kb reads/s avg: $disk_writes\n";
+    print "\t        PAST LQT: $num_past_long_query\n";
+}
+
+## iostat... for some reason.... would not update on zfs... again...
+## maybe this will work properly on xfs ??
+sub diskops {
+    $disk_writes    = 0;
+    $disk_reads     = 0;
+    local $iostats  = '';
+    local $counter  = 0;
+    $iostats    = `iostat -zxr`;
+    chomp($iostats);
+    local @iostats = split /\n/, $iostats;
+    
+    foreach my $line (@iostats) {
+        my @line_ar = split /,/, $line;
+        if ($line_ar[0] =~ m/^sd/) {
+            #$disk_reads        += $line_ar[1];
+            #$disk_writes   += $line_ar[2];
+            
+            ## the below are kilobyte read/writes per second
+            $disk_reads     += $line_ar[3];
+            $disk_writes    += $line_ar[4];
+            $counter++;
+        }
+    }
+    $disk_reads     = ($disk_reads / $counter);
+    $disk_writes    = ($disk_writes / $counter);
+}
+
+
+sub usage {
+    my $msg = shift @_;
+    
+    print "ERROR: $msg\n" if (defined($msg) && $msg ne "");
+    
+    print <<EOF;
+    
+    $0 - Parse the process list from the information_schema.processlist table
+    
+    Basic Usage: $0 -u <user> -h <host> -d <db> -c <command> -t <time (seconds)> -s <state> -q <info (query)> -l <loop (seconds)> -i
+        
+        -i              Print the ID only (useful for joining with another script to kill)
+        -b              Suppress the /* Backtrace */ output
+        -help           Show this screen
+        -stats          Only show status (# processes, # locked, etc...)
+        -debug          Print out debug messages, this is an incrementing option
+        -dft            Run with Defaults - This is like doing: $0 -l 3 -c Query -o "time ASC"
+        -kill           Kill the queries that match your parameters. Becareful with this, and only kill queries when you absolutely need to.
+        -log            Log the process list as opposed to sending it to the terminal
+        -ka             Kill everything - not ONLY select queries. Without this option, you can only kill select queries.
+        -kt <#num>      This is optional, and is here to override the default threshold of connections ($kill_threshold). Set to "off", to turn this off altogether.
+        -ky             This is optional. This will bypass the prompt asking the user if they are sure they want to kill queries.
+        -lt <#num>      This is optional. This is the same as the override for kill threshold, only the default here is "off", meaning always log if -log was used.
+        -l <#num>       Loop. Keep showing the process list every #num seconds
+        -u <user>       Only show processes from this user
+        -h <host>       Only show processes from this host
+        -d <db>         Only show processes running on this database
+        -c <command>    Only show processes which are of "command"
+        -t <seconds>    Show processes that have been running >= seconds
+        -s <state>      Only show processes that are in this state
+        -q <query>      The start of the query you are looking for (must encapsulate in quotes if this contains spaces)
+        -o <orderby>    Order the results by one or a combination of the following (id, user, host, db, time, state, info) Default is time desc
+        
+    $0 -dft
+        Run with defaults. Same as -l 3 -c Query -o "time ASC"
+    $0 -l 3 -q SELECT
+        Loop every 3 seconds looking for any query starting with "SELECT"
+    $0 -l 3 -q "SELECT somefield, someotherfield"
+        Loop every 3 seconds looking for queries matching "SELECT somefield, someotherfield"
+    $0 -l 3 -c Query -t 30
+        Loop every 3 seconds looking for queries that have been running 30 seconds or longer
+    $0 -s Locked -o "db desc"
+        Run once, showing queries that are in a Locked state ordering by the database name DESC
+        
+    $0 -kill -kt 100 -t 5 -l 3 -q "SELECT field1, field2"
+        Kill queries running longer than 5 seconds, matching "SELECT field1, field2", when connections are 100 or greater, loop every 3 seconds.
+    $0 -kill -kt off -s Locked -l 5 -q "SELECT \* FROM table1"
+        Kill Locked queries, connection threshold off, matching "SELECT * FROM table1", looping every 5 seconds 
+        
+EOF
+    exit 0;
+}
+
+sub trim($) {
+    my $string = shift;
+    if (!defined($string) || $string eq "") {
+        return "";
+    }
+    $string =~ s/^\s+//;
+    $string =~ s/\s+$//;
+    return $string;
+}
