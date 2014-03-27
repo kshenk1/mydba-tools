@@ -42,6 +42,9 @@ my $dft                     = 0;    ## run with default, or most common usage pa
 ## that was already established to to get the ids to kill.
 my $kill                    = 0;    ## Be careful, take out the queries that match your parameters
 my $kill_log_on             = 0;    ## This is used to control whether we can successfully write a kill log or not.
+my $kill_log_internal       = 0;    ## by default, we'll send kill out put to stdout. If you specify this flag, we'll attempt to log
+                                    ## within this script. "logging internally" works for command line usage.
+                                    ## Do not use this flag if this script is run from cron. Redirect STDOUT to a logfile in that case.
 my $query_log_on            = 0;    ## this is used to control whether we can write a query log or not.
 my $kill_count              = 0;    ## how many did we get? :-)
 my $kill_threshold          = 500;  ## IF YOU DON'T OVERRIDED THIS, then we'll have to hit this many connections before we'll kill your queries;
@@ -92,9 +95,10 @@ GetOptions(
     "kill"  => \$kill,
     "kt=s"  => \$kill_threshold,        ## this says string here because it's used for a integer as well as "off"
     "ky"    => \$kill_yes,
-    "lt=s"  => \$log_threshold,
+    "kl"    => \$kill_log_internal,
     "ka"    => \$kill_all,
     "log"   => \$log_pslist,
+    "lt=s"  => \$log_threshold,
     "l=i"   => \$loop_second_interval,
     "b"     => \$ignore_backtrace, 
     "u=s"   => \$user,
@@ -186,13 +190,15 @@ if ($kill == 1) {
         }
     }
 
-    my $kill_log = "$log_base/mysql_kill.log";
-    if (open(KILL_LOG, ">>$kill_log")) {
-        ## if we're able to open this for appending, flip this variable so it's easy for us to check later.
-        $kill_log_on = 1;
-        print "\nSetting logfile to: $kill_log\n";
-    } else {
-        print "\nWARNING: Unable to write to the kill log: $kill_log, but we'll kill queries anyway...\n" if ($kill_log_on == 0);
+    if ($kill_log_internal == 1) {
+        my $kill_log = "$log_base/mysql_kill.log";
+        if (open(KILL_LOG, ">>$kill_log")) {
+            ## if we're able to open this for appending, flip this variable so it's easy for us to check later.
+            $kill_log_on = 1;
+            print "\nSetting logfile to: $kill_log\n";
+        } else {
+            print "\nWARNING: Unable to write to the kill log: $kill_log, but we'll kill queries anyway...\n" if ($kill_log_on == 0);
+        }
     }
     print "  NOTICE: There is no need to use -i with -kill\n" if ($id_only == 1);
     print " WARNING: KILL IS ON! Seeking and Destroying queries!\n";
@@ -265,7 +271,8 @@ if ($loop_second_interval > 0) {
         pslist();
         
         ## print a little message just to show this is still alive....
-        print "\n\t\t...still working...\n" if ($kill == 1 && ($_loop_counter % 10 == 0) && $kill_count == 0);
+        ## send it to stderr just in case you want to hide it.
+        print STDERR "\n\t\t...still working...\n" if ($kill == 1 && ($_loop_counter % 10 == 0) && $kill_count == 0);
         
         sleep $loop_second_interval;
     }
@@ -381,9 +388,15 @@ sub myKill {
     ## and only print the first 100 characters of the query to the terminal.
     printf "%-20s -> %-22s -> %-100s\n", $mydate, "Killed: $kill_id", substr($row->{info}, 0, 100);
     
-    ## Log it
-    print KILL_LOG "##KILL DATE: ", $mydate, " ##ID: ", $kill_id, " ##USER: ", $row->{user}, " ##HOST: ", $row->{host}, " ##DB: ", $row->{db},
-        " ##COMMAND: ", $row->{command}, " ##TIME: ", $row->{time}, " ##STATE: ", $row->{state}, " ##INFO: ", $row->{info}, " ##\n" if ($kill_log_on == 1);
+    if ($kill_log_internal == 1) {
+        ## Log it
+        print KILL_LOG "##KILL DATE: ", $mydate, " ##ID: ", $kill_id, " ##USER: ", $row->{user}, " ##HOST: ", $row->{host}, " ##DB: ", $row->{db},
+            " ##COMMAND: ", $row->{command}, " ##TIME: ", $row->{time}, " ##STATE: ", $row->{state}, " ##INFO: ", $row->{info}, " ##\n" if ($kill_log_on == 1);
+    } else {
+        ## send to stdout.
+        print "##KILL DATE: ", $mydate, " ##ID: ", $kill_id, " ##USER: ", $row->{user}, " ##HOST: ", $row->{host}, " ##DB: ", $row->{db},
+            " ##COMMAND: ", $row->{command}, " ##TIME: ", $row->{time}, " ##STATE: ", $row->{state}, " ##INFO: ", $row->{info}, " ##\n"
+    }
     return 0;
 }
 
@@ -493,6 +506,7 @@ sub usage {
         -log            Log the process list as opposed to sending it to the terminal
         -ka             Kill everything - not ONLY select queries. Without this option, you can only kill select queries.
         -kt <#num>      This is optional, and is here to override the default threshold of connections ($kill_threshold). Set to "off", to turn this off altogether.
+        -kl             Log killed queryies from within this script, otherwise print to STDOUT.
         -ky             This is optional. This will bypass the prompt asking the user if they are sure they want to kill queries.
         -lt <#num>      This is optional. This is the same as the override for kill threshold, only the default here is "off", meaning always log if -log was used.
         -l <#num>       Loop. Keep showing the process list every #num seconds
