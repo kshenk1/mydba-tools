@@ -115,7 +115,7 @@ if ($kill == 1 && $dft == 1) {
 }
 
 if ($kill == 1 && $log_pslist == 1) {
-    print "WARNING: Killing queries automatically logs them\n";
+    print "ERROR: Killing queries automatically logs them\n";
     exit 1;
 }
 
@@ -217,8 +217,12 @@ if ($log_pslist == 1 ) {
 ## Ignore replication
 push(@where, "command != 'Binlog Dump'");
 
-## and don't include the query we are running
-push(@where, "db != 'information_schema'");
+## if we are not killing, then exclude the information_schema
+## this was noticed when testing with "SELECT SLEEP(100) FROM dual"
+if ($kill != 1) {
+    ## and don't include the query we are running
+    push(@where, "db != 'information_schema'");
+}
 #push(@where, "user != '$db_user'");
 
 ## this looked good at first, but if anything is running from localhost, we've just filtered it out.
@@ -372,6 +376,7 @@ sub myKill {
 
     ## Set this if nothing is there - otherwise we blow a warning when printing 
     $row->{info} = "NO QUERY FOUND IN THIS FIELD" if (!defined($row->{info}) || $row->{info} eq "");
+    $row->{db}   = "NULL" if (!defined($row->{db}) || $row->{db} eq "");
 
     ## and only print the first 100 characters of the query to the terminal.
     printf "%-20s -> %-22s -> %-100s\n", $mydate, "Killed: $kill_id", substr($row->{info}, 0, 100);
