@@ -39,6 +39,8 @@ PROCESS_THRESHOLD_CRIT  = 200
 SLEEPER_THRESHOLD_WARN  = 30
 SLEEPER_THRESHOLD_CRIT  = 75
 
+USER_WHERE      = []
+
 HOSTNAME        = None
 
 OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
@@ -148,7 +150,7 @@ def parse_args():
         help='Kill the queries that we find.')
     kill_group.add_argument('-kt', '--kill_threshold', dest='kill_threshold', default=100,
         help="The kill threshold. If a number is provided, we'll need to hit that many total connections before killing queries. You can \
-        set this to 'off' as well, which kills queries no matter how many connections there are")
+        set this to 'off' as well, which kills queries no matter how many connections there are.")
     kill_group.add_argument('-ka', '--kill_all', dest='kill_all', action='store_true',
         help="If this flag is provided, we'll attempt to kill everything, not only select queries. {0}".format(color_val("Use with caution!", Fore.RED + Style.BRIGHT))) 
     kill_group.add_argument('-ky', '--kill_yes', dest='kill_yes', action='store_true',
@@ -225,7 +227,6 @@ def color_val(val, color):
     return "{0}{1}{2}".format(color, val, Style.RESET_ALL)
 
 def record_kill(row):
-
     if os.path.exists(args.kill_log):
         if not os.access(args.kill_log, os.W_OK):
             return
@@ -241,43 +242,38 @@ def record_kill(row):
     with open(args.kill_log, 'a') as f:
         f.write(kill_string)
 
-def killah(results, num_processes):
-
+def killah(results):
     ## ok. is it an integer and are the connected threads greater than the kill threshold ?
-    if isinstance(args.kill_threshold, int):
-        ct = get_connected_threads()
-        if args.kill_threshold < ct:
-            print("Connected threads: {0}, Kill threshold: {1}. Not killing at this time".format(ct, args.kill_threshold))
+    try:
+        args.kill_threshold = int(args.kill_threshold)
+        ct = int(get_connected_threads())
+        if ct < args.kill_threshold:
+            print("Connected threads: {0}, Kill threshold: {1}. Not killing at this time".format(ct, args.kill_threshold), file=sys.stderr)
+            return
+    except ValueError:
+        if args.kill_threshold.lower() != 'off':
+            ## if we haven't set this to off, then no killing
+            print("kill threshold was set but doesn't = off. Not killing at this time.", file=sys.stderr)
             return
 
-    ## if we're still here, and kill_threshold isn't an integer
-    elif args.kill_threshold.lower() != 'off':
-        ## if we haven't set this to off, then no killing
-        print("kill threshold is not off. Not killing at this time.")
-        return
-
-    sql = "KILL {0}"
+    sql = "KILL %s"
     killed = 0
     for row in results:
-
         if not args.kill_all:
             if not row['info'].lower().startswith('select'):
                 continue
-
-        if db.query(sql.format(row['id'])):
+        if db.query(sql, (row['id'],)):
             record_kill(row)
             killed += 1
-
     return killed
-
 
 def process_row(results):
     if not args.id_only:
         num_reads           = num_writes = num_locked = num_closing = num_opening = num_past_long_query = num_sleepers = 0
         user_count          = {}
         long_query_time     = get_long_query_time()
-    for row in results:
 
+    for row in results:
         if args.id_only:
             print(row['id'])
             continue
@@ -330,8 +326,11 @@ def pslist(sql, counter):
     if res:
         num_processes       = cur.rowcount
         if args.kill:
-            kills = killah(res, num_processes)
-            print("Killed: {0}".format(kills))
+            kills = killah(res)
+            if kills:
+                user_where_str = ' AND '.join(USER_WHERE)
+                print("{0}".format(color_val(get_now_date() + " :: " + get_hostname() + \
+                    " :: Killed: " + str(kills) + " (WHERE {0})".format(user_where_str), Fore.RED + Style.BRIGHT)))
             return
 
         if not args.id_only:
@@ -389,11 +388,11 @@ def pslist(sql, counter):
         return True
     else:
         if counter % 4 == 0:
-            print(color_val("{0} :: Still looking...".format(get_now_date()), Style.BRIGHT))
+            print(color_val("{0} :: Still looking...".format(get_now_date()), Style.BRIGHT), file=sys.stderr)
         return False
 
 def main():
-
+    global USER_WHERE
     sql             = ''
     where           = []
     where_str       = ''
@@ -402,7 +401,7 @@ def main():
 
     if args.kill:
         if not args.kill_yes:
-            ans = raw_input("Are you sure you want to kill queries? ")
+            ans = raw_input(color_val("Are you sure you want to kill queries? ", Style.BRIGHT))
             if ans.lower() not in ('y', 'yes'):
                 print("Ok, then only use --kill when you are you want to kill stuff.")
                 sys.exit(0)
@@ -413,11 +412,6 @@ def main():
         select_fields += ['user', 'host', 'db', 'command', 'time', 'state', 'info']
 
     sql         = "SELECT {0} FROM processlist".format(', '.join(select_fields))
-
-    where       = [
-        "command != 'Binlog Dump'",
-        "(db != 'information_schema' OR db IS NULL)", ## confuses me why I had to add OR db IS NULL
-    ]
 
     if args.default:
         where.append("(command = 'Query' OR command = 'Connect')")
@@ -439,6 +433,18 @@ def main():
             where.append("db = '{0}'".format(args.database))
         if args.query:
             where.append("info LIKE '{0}%'".format(args.query))
+        USER_WHERE = list(where)
+
+    if args.kill and not where:
+        print(color_val("ERROR: Cannot kill without specifying criteria!", Fore.RED + Style.BRIGHT))
+        sys.exit(1)
+
+    if args.kill and args.default:
+        print(color_val("ERROR: Cannot kill using defaults!", Fore.RED + Style.BRIGHT))
+        sys.exit(1)
+
+    where.append("command != 'Binlog Dump'")
+    where.append("(db != 'information_schema' OR db IS NULL)") ## confuses me why I had to add OR db IS NULL
 
     if args.ignore_system_user == True:
         where.append("user != 'system user'")
