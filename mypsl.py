@@ -26,6 +26,8 @@ import json
 import time, datetime
 import signal
 import re
+import subprocess
+from distutils.spawn import find_executable
 from socket import gethostname
 
 '''
@@ -83,15 +85,22 @@ class mydb():
     connect_args    = {}
 
     def __init__(self):
+        socket = None
         self.connect_args = {
-            'host':         args.host,
-            'user':         args.user,
             'db':           'information_schema',
+            'user':         args.user,
             'passwd':       args.passwd,
-            #'unix_socket':  '',
             'charset':      args.charset,
             'cursorclass':  MySQLdb.cursors.DictCursor
         }
+        if args.host == 'localhost':
+            socket = get_mysql_default('socket')
+            if socket:
+                self.connect_args['unix_socket'] = socket
+                
+        if args.host != 'localhost' or not socket:
+            self.connect_args['host']   = args.host
+            self.connect_args['port']   = args.port
 
         MySQLdb.paramstyle = 'pyformat'
 
@@ -99,8 +108,18 @@ class mydb():
         try:
             self.conn = MySQLdb.connect(**self.connect_args)
         except MySQLdb.Error, e:
-            print("{0}: {1}".format(e.args[0],e.args[1]))
-            print("Unable to connect to mysql on {0}".format(self.connect_args['host']))
+            print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
+
+            msg = "Unable to connect to mysql"
+            if 'host' in self.connect_args:
+                msg = msg + " on {0}.".format(self.connect_args['host'])
+            elif 'unix_socket' in self.connect_args:
+                msg = msg + " using: {0}.".format(self.connect_args['unix_socket'])
+
+            msg = msg + "\nCheck connection configuration"
+
+            print(color_val(msg, Fore.RED + Style.BRIGHT))
+            sys.exit(1)
 
     def query(self, sql, args=[]):
         try:
@@ -125,6 +144,43 @@ class mydb():
     def db_close(self):
         if self.conn:
             self.conn.close()
+
+def get_mysql_default(search_opt):
+    my_print_defaults = find_executable('my_print_defaults')
+
+    my_cnf_file = find_my_cnf()
+
+    if not my_cnf_file: return None
+
+    if my_print_defaults:
+        cmd     = [my_print_defaults, '--defaults-file', my_cnf_file, 'mysqld']
+        proc    = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc.wait()
+
+        if proc.returncode != 0:
+            print(color_val(proc.stderr.readlines(), Fore.RED + Style.BRIGHT))
+            return None
+        defaults = proc.stdout.readlines()
+
+        for d in defaults:
+            if d.startswith("--{0}".format(search_opt)):
+                return d.split('=')[1].strip()
+
+    return None
+
+def find_my_cnf():
+    ## why oh why do different flavors of linux have to put these in different places.
+    locations = (
+        '/etc/my.cnf',
+        '/etc/mysql/my.cnf',
+        '/etc/mysql/conf.d/my.cnf',
+    )
+    for l in locations:
+        ## return the first one we find
+        if os.path.isfile(l):
+            return l
+
+    return None
 
 def parse_args():
     parser = argparse.ArgumentParser(description=color_val('MySQL Process list watcher & query killer.', Fore.YELLOW + Style.BRIGHT),
