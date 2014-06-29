@@ -53,14 +53,6 @@ try:
 except ImportError:
     HAS_COLOR = False
 
-if not HAS_MYSQLDB:
-    print("Unable to import MySQLdb!")
-    sys.exit(1)
-
-if not HAS_COLOR:
-    print("Unable to import colorama!")
-    sys.exit(1)
-
 PROCESS_THRESHOLD_WARN  = 100
 PROCESS_THRESHOLD_CRIT  = 200
 SLEEPER_THRESHOLD_WARN  = 30
@@ -108,7 +100,7 @@ class mydb():
         except MySQLdb.Error, e:
             print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
 
-            msg = "Unable to connect to mysql"
+            msg = "ERROR: Unable to connect to mysql"
             if 'host' in self.connect_args:
                 msg = msg + " on {0}.".format(self.connect_args['host'])
             elif 'unix_socket' in self.connect_args:
@@ -155,7 +147,7 @@ def get_mysql_default(search_opt):
         proc.wait()
 
         if proc.returncode != 0:
-            print(color_val(proc.stderr.readlines(), Fore.RED + Style.BRIGHT))
+            print(color_val(proc.stderr.readlines(), Fore.RED + Style.BRIGHT), file=sys.stderr)
             return None
         defaults = proc.stdout.readlines()
 
@@ -463,6 +455,7 @@ def pslist(sql, counter):
 
         return True
     else:
+        ## just sending a message to the terminal to let the user that the script is still working, and isn't stuck.
         if counter % 4 == 0:
             print(color_val("{0} :: Still looking...".format(get_now_date()), Style.BRIGHT), file=sys.stderr)
         return False
@@ -479,7 +472,7 @@ def main():
         if not args.kill_yes:
             ans = raw_input(color_val("Are you sure you want to kill queries? ", Style.BRIGHT))
             if ans.lower() not in ('y', 'yes'):
-                print("Ok, then only use --kill when you are you want to kill stuff.")
+                print("Ok, then only use --kill when you are sure you want to kill stuff.")
                 sys.exit(0)
 
     select_fields   = ['id']
@@ -509,6 +502,8 @@ def main():
             where.append("db = '{0}'".format(args.database))
         if args.query:
             where.append("info LIKE '{0}%'".format(args.query))
+        if args.order_by:
+            order_by.append(args.order_by)
         USER_WHERE = list(where)
 
     if args.kill and not where:
@@ -547,6 +542,17 @@ def main():
     else:
         pslist(sql, 0)
 
+## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+init()
+
+if not HAS_MYSQLDB:
+    print(color_val("ERROR: Unable to import MySQLdb!", Fore.RED + Style.BRIGHT))
+    sys.exit(1)
+
+if not HAS_COLOR:
+    print(color_val("ERROR: Unable to import colorama!", Fore.RED + Style.BRIGHT))
+    sys.exit(1)
 
 signal.signal(signal.SIGINT, sig_handler)
 
