@@ -35,7 +35,7 @@ from socket import gethostname
     --> print("the message", file=sys.stderr)
     i.e. mypsl.py --options 2>/dev/null
 
-    Please see the help section for usage, and please take care when killing queries.
+    Please see the help section for usage (mypsl.py -h), and please take care when killing queries.
 '''
 
 try:
@@ -82,7 +82,7 @@ class mydb():
     cursor          = None
     connect_args    = {}
 
-    def __init__(self, args):
+    def __init__(self):
         self.connect_args = {
             'host':         args.host,
             'user':         args.user,
@@ -501,7 +501,7 @@ def main():
 signal.signal(signal.SIGINT, sig_handler)
 
 args    = parse_args()
-db      = mydb(args)
+db      = mydb()
 
 if __name__ == "__main__":
     main()
