@@ -157,6 +157,9 @@ def get_mysql_default(search_opt):
             return None
         defaults = proc.stdout.readlines()
 
+        if not defaults:
+            return None
+
         for d in defaults:
             if d.startswith("--{0}".format(search_opt)):
                 return d.split('=')[1].strip()
@@ -184,13 +187,15 @@ def parse_args():
     kill_group      = parser.add_argument_group(color_val('Kill Options', Fore.RED + Style.BRIGHT))
 
     con_opt_group.add_argument('-H', '--host', dest='host', type=str, default='localhost',
-        help='The host to get the process list from.')
+        help='The host to get the process list from. If localhost, we will attempt to find and use the socket file first.')
     con_opt_group.add_argument('-p', '--port', dest='port', type=int, default=3306,
-        help="The host's port.")
+        help="The host's port. If the host is localhost, we will attempt to find and use the socket file first.")
     con_opt_group.add_argument('-u', '--user', dest='user', type=str, default='root',
         help='The user to connect to the host as.')
     con_opt_group.add_argument('-P', '--pass', dest='passwd', type=str, default='',
         help='The password for authentication.')
+    #con_opt_group.add_argument('-S', '--socket', dest='socket', type=str,
+    #    help='If connecting locally, optionally use this socket file instead of host/port.')
     con_opt_group.add_argument('-ch', '--charset', dest='charset', type=str, default='utf8',
         help='Charset to use with the database.')
 
