@@ -63,16 +63,12 @@ if not HAS_COLOR:
 
 PROCESS_THRESHOLD_WARN  = 100
 PROCESS_THRESHOLD_CRIT  = 200
-
 SLEEPER_THRESHOLD_WARN  = 30
 SLEEPER_THRESHOLD_CRIT  = 75
 
 USER_WHERE      = []
-
 HOSTNAME        = None
-
 OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
-
 READ_SEARCH     = re.compile('^(show|select|desc)', re.IGNORECASE)
 WRITE_SEARCH    = re.compile('^(insert|update|create|alter|replace|rename|delete)', re.IGNORECASE)
 LOCKED_SEARCH   = re.compile('^(locked|waiting for table level lock|waiting for table metadata lock)', re.IGNORECASE)
@@ -146,9 +142,8 @@ class mydb():
             self.conn.close()
 
 def get_mysql_default(search_opt):
-    my_print_defaults = find_executable('my_print_defaults')
-
-    my_cnf_file = find_my_cnf()
+    my_print_defaults   = find_executable('my_print_defaults')
+    my_cnf_file         = find_my_cnf()
 
     if not my_cnf_file: return None
 
@@ -165,7 +160,6 @@ def get_mysql_default(search_opt):
         for d in defaults:
             if d.startswith("--{0}".format(search_opt)):
                 return d.split('=')[1].strip()
-
     return None
 
 def find_my_cnf():
@@ -179,7 +173,6 @@ def find_my_cnf():
         ## return the first one we find
         if os.path.isfile(l):
             return l
-
     return None
 
 def parse_args():
@@ -369,18 +362,12 @@ def process_row(results):
 
         row['host'] = row['host'].split(':')[0]
 
-        if READ_SEARCH.search(row['info']):
-            num_reads   += 1
-        if WRITE_SEARCH.search(row['info']):
-            num_writes  += 1
-        if LOCKED_SEARCH.search(row['state']):
-            num_locked  += 1
-        if OPENING_SEARCH.search(row['state']):
-            num_opening += 1
-        if CLOSING_SEARCH.search(row['state']):
-            num_closing += 1
-        if int(row['time']) > long_query_time:
-            num_past_long_query += 1
+        if READ_SEARCH.search(row['info']):     num_reads   += 1
+        if WRITE_SEARCH.search(row['info']):    num_writes  += 1
+        if LOCKED_SEARCH.search(row['state']):  num_locked  += 1
+        if OPENING_SEARCH.search(row['state']): num_opening += 1
+        if CLOSING_SEARCH.search(row['state']): num_closing += 1
+        if int(row['time']) > long_query_time:  num_past_long_query += 1
 
         if row['command'].find('Sleep') != -1 or row['state'].find('sleep') != -1:
             num_sleepers += 1
