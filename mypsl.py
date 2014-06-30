@@ -139,24 +139,24 @@ def get_mysql_default(search_opt):
     my_print_defaults   = find_executable('my_print_defaults')
     my_cnf_file         = find_my_cnf()
 
-    if not my_cnf_file: return None
+    if not my_cnf_file:         return None
+    if not my_print_defaults:   return None
 
-    if my_print_defaults:
-        cmd     = [my_print_defaults, '--defaults-file', my_cnf_file, 'mysqld']
-        proc    = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        proc.wait()
+    cmd     = [my_print_defaults, '--defaults-file', my_cnf_file, 'mysqld']
+    proc    = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc.wait()
 
-        if proc.returncode != 0:
-            print(color_val(proc.stderr.readlines(), Fore.RED + Style.BRIGHT), file=sys.stderr)
-            return None
-        defaults = proc.stdout.readlines()
+    if proc.returncode != 0:
+        print(color_val(proc.stderr.readlines(), Fore.RED + Style.BRIGHT), file=sys.stderr)
+        return None
+    defaults = proc.stdout.readlines()
 
-        if not defaults:
-            return None
+    if not defaults:
+        return None
 
-        for d in defaults:
-            if d.startswith("--{0}".format(search_opt)):
-                return d.split('=')[1].strip()
+    for d in defaults:
+        if d.startswith("--{0}".format(search_opt)):
+            return d.split('=')[1].strip()
     return None
 
 def find_my_cnf():
@@ -166,6 +166,7 @@ def find_my_cnf():
         '/etc/mysql/my.cnf',
         '/etc/mysql/conf.d/my.cnf',
     )
+
     for l in locations:
         ## return the first one we find
         if os.path.isfile(l):
@@ -278,6 +279,15 @@ def get_connected_threads():
         return res['Value']
     return 0
 
+def get_num_sleepers():
+    sql = "SELECT count(id) AS num_sleepers FROM processlist WHERE command = 'Sleep' OR state = 'User sleep'"
+    cur = db.query(sql)
+    res = cur.fetchone()
+    cur.close()
+    if res and 'num_sleepers' in res:
+        return int(res['num_sleepers'])
+    return 0
+
 def get_hostname():
     global HOSTNAME
 
@@ -363,13 +373,20 @@ def process_row(results):
 
         if READ_SEARCH.search(row['info']):     num_reads   += 1
         if WRITE_SEARCH.search(row['info']):    num_writes  += 1
+
+        if row['state'] == 'Copying to tmp table on disk': num_writes += 1
+
         if LOCKED_SEARCH.search(row['state']):  num_locked  += 1
         if OPENING_SEARCH.search(row['state']): num_opening += 1
         if CLOSING_SEARCH.search(row['state']): num_closing += 1
         if int(row['time']) > long_query_time:  num_past_long_query += 1
 
-        if row['command'].find('Sleep') != -1 or row['state'].find('sleep') != -1:
-            num_sleepers += 1
+        ## I think I need to fix this a bit....
+        if (args.command and args.command.lower() == 'sleep') or (args.state and args.state.lower().find('sleep') != -1):
+            if row['command'].find('Sleep') != -1 or row['state'].find('sleep') != -1:
+                num_sleepers += 1
+        else:
+            num_sleepers = get_num_sleepers()
 
         print(OUT_FORMAT.format(row['id'], row['user'], row['host'], row['db'], row['command'], row['time'], row['state'], row['info']))
 
@@ -544,6 +561,8 @@ def main():
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+## init colorama - doesn't appear to be required (works without this call), but it's in
+## the docs... so...
 init()
 
 if not HAS_MYSQLDB:
