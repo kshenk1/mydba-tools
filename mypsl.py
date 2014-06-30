@@ -367,8 +367,12 @@ def process_row(results):
         else:
             user_count[row['user']] += 1
 
-        if not row['info']: row['info'] = ''
+        ## every once in a while I get this error for any one of the fields:
+        ## TypeError: expected string or buffer
+        if not row['info']:     row['info'] = ''
+        if not row['state']:    row['state'] = ''
 
+        ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
 
         if READ_SEARCH.search(row['info']):     num_reads   += 1
@@ -403,7 +407,6 @@ def process_row(results):
         'num_past_long_query':  num_past_long_query,
         'user_count':           user_count
     }
-
 
 def pslist(sql, counter):
     cur = db.query(sql)
