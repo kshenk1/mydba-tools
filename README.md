@@ -13,6 +13,6 @@ of perl as it is which is why I started fresh with...
 The options are pretty much the same as the old perl version, it has some enhancements in output including color and more stats.
 I'm not sure off hand about the perl version, but this version will run locally as well as connect to remote hosts granted you have
 access to the server. If running locally, we'll attempt to use the mysql socket and default back to host/port. Remote connections
-will obviously always use host/port.
+will obviously always use host/port. See `mypsl.py --help` to get a full list of options and how to use them.
 
 `watch_replication.sh` is pretty much just a stub at the moment. As I have time and the need arises I'll update this one more.
