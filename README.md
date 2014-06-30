@@ -14,3 +14,5 @@ The options are pretty much the same as the old perl version, it has some enhanc
 I'm not sure off hand about the perl version, but this version will run locally as well as connect to remote hosts granted you have
 access to the server. If running locally, we'll attempt to use the mysql socket and default back to host/port. Remote connections
 will obviously always use host/port.
+
+`watch_replication.sh` is pretty much just a stub at the moment. As I have time and the need arises I'll update this one more.
