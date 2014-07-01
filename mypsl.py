@@ -278,9 +278,18 @@ def get_now_date():
 
 def print_header():
     ct = get_connected_threads()
+    mc = get_max_connections()
+
+    if (ct > (mc * .75)):
+        ct_str = color_val(ct, Fore.RED)
+    elif (ct > (mc * .5)):
+        ct_str = color_val(ct, Fore.YELLOW)
+    else:
+        ct_str = color_val(ct, Fore.CYAN)
+
     header = "{0}".format(Fore.YELLOW) + "-"*40 + " " + "{0}".format(Fore.GREEN) + get_hostname() + \
         "{0} :: ".format(Fore.RESET) + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + \
-        " :: Connected Threads: {0}{1}{2}".format(Fore.GREEN, ct, Fore.RESET) + \
+        " :: Threads: ({0} / {1})".format(ct_str, mc) + \
         " {0}".format(Fore.YELLOW) + \
         "-"*40 + "{0}".format(Fore.RESET)
     print(header)
@@ -311,7 +320,16 @@ def get_connected_threads():
     res = cur.fetchone()
     cur.close()
     if res and 'Value' in res:
-        return res['Value']
+        return int(res['Value'])
+    return 0
+
+def get_max_connections():
+    sql = "SHOW GLOBAL VARIABLES LIKE 'max_connections'"
+    cur = db.query(sql)
+    res = cur.fetchone()
+    cur.close()
+    if res and 'Value' in res:
+        return int(res['Value'])
     return 0
 
 def get_num_sleepers():
@@ -365,7 +383,7 @@ def killah(results):
     ## ok. is it an integer and are the connected threads greater than the kill threshold ?
     try:
         args.kill_threshold = int(args.kill_threshold)
-        ct = int(get_connected_threads())
+        ct = get_connected_threads()
         if ct < args.kill_threshold:
             print("Connected threads: {0}, Kill threshold: {1}. Not killing at this time".format(ct, args.kill_threshold), file=sys.stderr)
             return
@@ -415,7 +433,7 @@ def process_row(results):
         else:
             user_count[row['user']] += 1
 
-        ## every once in a while I get this error for any one of the fields:
+        ## every once in a while these come back as None
         ## TypeError: expected string or buffer
         if not row['info']:     row['info'] = ''
         if not row['state']:    row['state'] = ''
