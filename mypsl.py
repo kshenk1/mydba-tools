@@ -111,7 +111,6 @@ class mydb():
             if args.host == 'localhost':
                 socket = get_mysql_default('socket')
                 if socket:
-                    print("Using socket...")
                     self.connect_args['unix_socket'] = socket
                 else:
                     print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
