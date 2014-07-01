@@ -31,13 +31,25 @@ from distutils.spawn import find_executable
 from socket import gethostname
 
 '''
-    Requires MySQLdb and colorama
+    Requires MySQLdb, colorama, and yaml
 
     Some output is sent to stderr so you can hide this while running in the terminal if you want.
     --> print("the message", file=sys.stderr)
     i.e. mypsl.py --options 2>/dev/null
 
     Please see the help section for usage (mypsl.py -h), and please take care when killing queries.
+
+    If using the --config option, 
+        - The config file will override any connection information provided in other options.
+        - the ".mypsl" directory must already exist
+        - the config file must be in that directory and be readable
+        - you will provide only the filename - not the full path
+        - this must be a valid yaml file with just the connection information: i.e. 
+            host: hostname
+            port: 1234
+            user: me
+            passwd: mypassword
+
 '''
 
 try:
@@ -52,6 +64,13 @@ try:
     HAS_COLOR = True
 except ImportError:
     HAS_COLOR = False
+
+## not all have this by default...
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
 
 PROCESS_THRESHOLD_WARN  = 100
 PROCESS_THRESHOLD_CRIT  = 200
@@ -74,23 +93,28 @@ class mydb():
 
     def __init__(self):
         socket = None
+
+        ## default everything, and override as necessary.
         self.connect_args = {
             'db':           'information_schema',
-            'user':         args.user,
-            'passwd':       args.passwd,
             'charset':      args.charset,
-            'cursorclass':  MySQLdb.cursors.DictCursor
+            'cursorclass':  MySQLdb.cursors.DictCursor,
+            'host':         args.host,
+            'port':         args.port,
+            'user':         args.user,
+            'passwd':       args.passwd
         }
-        if args.host == 'localhost':
-            socket = get_mysql_default('socket')
-            if socket:
-                self.connect_args['unix_socket'] = socket
-            else:
-                print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
-                
-        if args.host != 'localhost' or not socket:
-            self.connect_args['host']   = args.host
-            self.connect_args['port']   = args.port
+
+        if args.connect_config:
+            self.__load_from_config()
+        else:
+            if args.host == 'localhost':
+                socket = get_mysql_default('socket')
+                if socket:
+                    print("Using socket...")
+                    self.connect_args['unix_socket'] = socket
+                else:
+                    print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
 
         MySQLdb.paramstyle = 'pyformat'
 
@@ -125,6 +149,15 @@ class mydb():
 
         if self.cursor:
             return self.cursor
+        return False
+
+    def __load_from_config(self):
+        cfile = os.path.join(os.environ['HOME'], '.mypsl', args.connect_config)
+        if os.path.isfile(cfile):
+            with open(cfile, 'r') as f:
+                self.connect_args.update(yaml.load(f))
+                args.host = self.connect_args['host']
+                return True
         return False
 
     def cursor_close(self):
@@ -193,6 +226,9 @@ def parse_args():
     #    help='If connecting locally, optionally use this socket file instead of host/port.')
     con_opt_group.add_argument('-ch', '--charset', dest='charset', type=str, default='utf8',
         help='Charset to use with the database.')
+    con_opt_group.add_argument('--config', dest='connect_config', type=str, default=False,
+        help='Load connection configuration from a file in {0}. Just provide the filename. '.format(os.path.join(os.environ['HOME'], '.mypsl/')) + \
+        'This will override any other connection information provided')
 
     ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -319,7 +355,7 @@ def record_kill(row):
             with open(args.kill_log, 'w+') as f:
                 pass
         except IOError:
-            print("Unable to create: {0}".format(args.kill_log))
+            print(color_val("Unable to create: {0}".format(args.kill_log), Fore.RED + Style.BRIGHT), file=sys.stderr)
             return
 
     kill_string = "{0} :: {1} :: {2}\n".format(get_now_date(), get_hostname(), ', '.join("%s: %s" % (k, v) for (k, v) in row.iteritems()))
@@ -350,6 +386,19 @@ def killah(results):
             record_kill(row)
             killed += 1
     return killed
+
+def show_processing_time(start, end):
+    elapsed     = round(end - start, 3)
+    elapsed_str = ''
+
+    if elapsed > 5:
+        elapsed_str = color_val(elapsed, Fore.RED)
+    elif elapsed > 1:
+        elapsed_str = color_val(elapsed, Fore.YELLOW)
+    else:
+        elapsed_str = color_val(elapsed, Fore.CYAN)
+
+    print("\t({0}): {1}".format(color_val("Processing time", Fore.GREEN), elapsed_str))
 
 def process_row(results):
     if not args.id_only:
@@ -409,6 +458,7 @@ def process_row(results):
     }
 
 def pslist(sql, counter):
+    start = time.time()
     cur = db.query(sql)
     res = cur.fetchall()
     if res:
@@ -471,13 +521,15 @@ def pslist(sql, counter):
 
             print("\t({0}) {1}".format(color_val("Users", Fore.GREEN), mystr))
 
+            show_processing_time(start, time.time())
+
             print()
 
         return True
     else:
         ## just sending a message to the terminal to let the user that the script is still working, and isn't stuck.
         if counter % 4 == 0:
-            print(color_val("{0} :: Still looking...".format(get_now_date()), Style.BRIGHT), file=sys.stderr)
+            print(color_val("{0} :: ({1}) :: Still looking...".format(get_now_date(), get_hostname()), Style.BRIGHT), file=sys.stderr)
         return False
 
 def main():
@@ -579,6 +631,11 @@ if not HAS_COLOR:
 signal.signal(signal.SIGINT, sig_handler)
 
 args    = parse_args()
+
+if not HAS_YAML and args.connect_config:
+    print(color_val('ERROR: Unable to import yaml!', Fore.RED + Style.BRIGHT))
+    sys.exit(1)
+
 db      = mydb()
 
 if __name__ == "__main__":
