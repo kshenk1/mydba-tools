@@ -83,8 +83,8 @@ OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
 READ_SEARCH     = re.compile('^(show|select|desc)', re.IGNORECASE)
 WRITE_SEARCH    = re.compile('^(insert|update|create|alter|replace|rename|delete)', re.IGNORECASE)
 LOCKED_SEARCH   = re.compile('^(locked|waiting for table level lock|waiting for table metadata lock)', re.IGNORECASE)
-OPENING_SEARCH  = re.compile('^opening table', re.IGNORECASE)
-CLOSING_SEARCH  = re.compile('^closing table', re.IGNORECASE)
+#OPENING_SEARCH  = re.compile('^opening table', re.IGNORECASE)
+#CLOSING_SEARCH  = re.compile('^closing table', re.IGNORECASE)
 
 class mydb():
     conn            = None
@@ -136,7 +136,8 @@ class mydb():
 
     def query(self, sql, args=[]):
         try:
-            self.cursor = self.conn.cursor()
+            if not self.cursor:
+                self.cursor = self.conn.cursor()
             if args:
                 self.cursor.execute(sql, args)
             else:
@@ -287,11 +288,10 @@ def print_header():
     else:
         ct_str = color_val(ct, Fore.CYAN)
 
-    header = "{0}".format(Fore.YELLOW) + "-"*40 + " " + "{0}".format(Fore.GREEN) + get_hostname() + \
-        "{0} :: ".format(Fore.RESET) + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + \
-        " :: Threads: ({0} / {1})".format(ct_str, mc) + \
-        " {0}".format(Fore.YELLOW) + \
-        "-"*40 + "{0}".format(Fore.RESET)
+    bar = "-"*40
+    header = "%s%s%s %s%s :: %s :: Threads (%s / %s) %s%s%s" % \
+        (Fore.YELLOW, bar, Fore.GREEN, get_hostname(), Fore.RESET, get_now_date(), ct_str, mc, Fore.YELLOW, bar, Fore.RESET)
+
     print(header)
     print("{0}".format(Style.BRIGHT) + OUT_FORMAT.format("ID", "USER", "HOST", "DB", "COMMAND", "TIME", "STATE", "INFO") + "{0}".format(Style.RESET_ALL))
 
@@ -309,7 +309,6 @@ def get_long_query_time():
     sql = "SHOW GLOBAL VARIABLES LIKE 'long_query_time'"
     cur = db.query(sql)
     res = cur.fetchone()
-    cur.close()
     if res and 'Value' in res:
         return int(round(float(res['Value'])))
     return 0
@@ -318,7 +317,6 @@ def get_connected_threads():
     sql = "SHOW GLOBAL STATUS LIKE 'Threads_connected'"
     cur = db.query(sql)
     res = cur.fetchone()
-    cur.close()
     if res and 'Value' in res:
         return int(res['Value'])
     return 0
@@ -327,7 +325,6 @@ def get_max_connections():
     sql = "SHOW GLOBAL VARIABLES LIKE 'max_connections'"
     cur = db.query(sql)
     res = cur.fetchone()
-    cur.close()
     if res and 'Value' in res:
         return int(res['Value'])
     return 0
@@ -336,7 +333,6 @@ def get_num_sleepers():
     sql = "SELECT count(id) AS num_sleepers FROM processlist WHERE command = 'Sleep' OR state = 'User sleep'"
     cur = db.query(sql)
     res = cur.fetchone()
-    cur.close()
     if res and 'num_sleepers' in res:
         return int(res['num_sleepers'])
     return 0
@@ -354,14 +350,13 @@ def get_hostname():
         sql = "SELECT @@hostname AS hostname"
         cur = db.query(sql)
         res = cur.fetchone()
-        cur.close()
         if res and 'hostname' in res:
             HOSTNAME = res['hostname']
 
     return HOSTNAME
 
 def color_val(val, color):
-    return "{0}{1}{2}".format(color, val, Style.RESET_ALL)
+    return "%s%s%s" % (color, val, Style.RESET_ALL)
 
 def record_kill(row):
     if os.path.exists(args.kill_log):
@@ -404,24 +399,30 @@ def killah(results):
             killed += 1
     return killed
 
-def show_processing_time(start, end):
+def show_processing_time(start, end, text='Processing time'):
     elapsed     = round(end - start, 3)
     elapsed_str = ''
 
     if elapsed > 5:
         elapsed_str = color_val(elapsed, Fore.RED)
-    elif elapsed > 1:
+    elif elapsed > .5:
         elapsed_str = color_val(elapsed, Fore.YELLOW)
     else:
         elapsed_str = color_val(elapsed, Fore.CYAN)
 
-    print("\t({0}): {1}".format(color_val("Processing time", Fore.GREEN), elapsed_str))
+    print("\t({0}): {1}".format(color_val(text, Fore.GREEN), elapsed_str))
 
 def process_row(results):
+    calculate_sleepers = True
     if not args.id_only:
         num_reads           = num_writes = num_locked = num_closing = num_opening = num_past_long_query = num_sleepers = 0
         user_count          = {}
-        long_query_time     = get_long_query_time()
+
+    if (args.command and args.command.lower() == 'sleep') or (args.state and 'sleep' in args.state.lower()):
+        calculate_sleepers = False
+    
+    if calculate_sleepers:
+        num_sleepers = get_num_sleepers()
 
     for row in results:
         if args.id_only:
@@ -435,28 +436,30 @@ def process_row(results):
 
         ## every once in a while these come back as None
         ## TypeError: expected string or buffer
-        if not row['info']:     row['info'] = ''
-        if not row['state']:    row['state'] = ''
+        if row['info']:
+            info = row['info'][:7].lower()
+        else:
+            info = ''
+
+        if not row['state']:
+            row['state'] = ''
 
         ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
 
-        if READ_SEARCH.search(row['info']):     num_reads   += 1
-        if WRITE_SEARCH.search(row['info']):    num_writes  += 1
+        if READ_SEARCH.search(info):    num_reads += 1
+        if WRITE_SEARCH.search(info):   num_writes += 1
 
         if row['state'] == 'Copying to tmp table on disk': num_writes += 1
 
-        if LOCKED_SEARCH.search(row['state']):  num_locked  += 1
-        if OPENING_SEARCH.search(row['state']): num_opening += 1
-        if CLOSING_SEARCH.search(row['state']): num_closing += 1
-        if int(row['time']) > long_query_time:  num_past_long_query += 1
+        if LOCKED_SEARCH.search(row['state']):          num_locked  += 1
+        if row['state'].startswith('Opening table'):    num_opening += 1
+        if row['state'].startswith('closing table'):    num_closing += 1
+        if int(row['time']) > long_query_time:          num_past_long_query += 1
 
-        ## I think I need to fix this a bit....
-        if (args.command and args.command.lower() == 'sleep') or (args.state and args.state.lower().find('sleep') != -1):
-            if row['command'].find('Sleep') != -1 or row['state'].find('sleep') != -1:
+        if calculate_sleepers:
+            if 'sleep' in row['command'].lower() or 'sleep' in row['state'].lower():
                 num_sleepers += 1
-        else:
-            num_sleepers = get_num_sleepers()
 
         print(OUT_FORMAT.format(row['id'], row['user'], row['host'], row['db'], row['command'], row['time'], row['state'], row['info']))
 
@@ -478,6 +481,7 @@ def pslist(sql, counter):
     start = time.time()
     cur = db.query(sql)
     res = cur.fetchall()
+    
     if res:
         num_processes       = cur.rowcount
         if args.kill:
@@ -494,7 +498,6 @@ def pslist(sql, counter):
         _nums               = process_row(res)
 
         if not args.id_only:
-            
             num_reads           = _nums['num_reads']
             num_writes          = _nums['num_writes']
             num_locked          = _nums['num_locked']
@@ -654,6 +657,8 @@ if not HAS_YAML and args.connect_config:
     sys.exit(1)
 
 db      = mydb()
+
+long_query_time     = get_long_query_time()
 
 if __name__ == "__main__":
     main()
