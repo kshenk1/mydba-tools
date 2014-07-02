@@ -76,6 +76,7 @@ PROCESS_THRESHOLD_WARN  = 100
 PROCESS_THRESHOLD_CRIT  = 200
 SLEEPER_THRESHOLD_WARN  = 30
 SLEEPER_THRESHOLD_CRIT  = 75
+INFO_TRIM_LENGTH        = 1000
 
 USER_WHERE      = []
 HOSTNAME        = None
@@ -254,6 +255,8 @@ def parse_args():
         help='Provide debug output.')
     config_group.add_argument('-o', '--order_by', dest='order_by', type=str,
         help='Order the results by a particular column: "user", "db asc", "db desc", "time desc"...etc')
+    config_group.add_argument('-T', '--trim_info', dest='trim_info', action='store_true',
+        help='Trim the info field (the query) to {0}'.format(INFO_TRIM_LENGTH))
 
     ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -413,15 +416,15 @@ def show_processing_time(start, end, text='Processing time'):
     print("\t({0}): {1}".format(color_val(text, Fore.GREEN), elapsed_str))
 
 def process_row(results):
-    calculate_sleepers = True
+    calculate_sleepers = False
     if not args.id_only:
         num_reads           = num_writes = num_locked = num_closing = num_opening = num_past_long_query = num_sleepers = 0
         user_count          = {}
 
     if (args.command and args.command.lower() == 'sleep') or (args.state and 'sleep' in args.state.lower()):
-        calculate_sleepers = False
+        calculate_sleepers = True
     
-    if calculate_sleepers:
+    if not calculate_sleepers:
         num_sleepers = get_num_sleepers()
 
     for row in results:
@@ -457,9 +460,11 @@ def process_row(results):
         if row['state'].startswith('closing table'):    num_closing += 1
         if int(row['time']) > long_query_time:          num_past_long_query += 1
 
-        if calculate_sleepers:
-            if 'sleep' in row['command'].lower() or 'sleep' in row['state'].lower():
-                num_sleepers += 1
+        if calculate_sleepers and ('sleep' in row['command'].lower()) or ('sleep' in row['state'].lower()):
+            num_sleepers += 1
+
+        if args.trim_info and len(row['info']) > 1000:
+            row['info'] = "%s ..." % row['info'][:1000]
 
         print(OUT_FORMAT.format(row['id'], row['user'], row['host'], row['db'], row['command'], row['time'], row['state'], row['info']))
 
@@ -578,6 +583,7 @@ def main():
         where.append("(command = 'Query' OR command = 'Connect')")
         args.loop_second_interval   = 3
         args.ignore_system_user     = True
+        args.trim_info              = True
 
         order_by    = [
             'time ASC',
