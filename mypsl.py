@@ -25,8 +25,8 @@ import argparse
 import json
 import time, datetime
 import signal
-import re
 import subprocess
+from collections import defaultdict
 from distutils.spawn import find_executable
 from socket import gethostname
 
@@ -81,11 +81,10 @@ INFO_TRIM_LENGTH        = 1000
 USER_WHERE      = []
 HOSTNAME        = None
 OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
-READ_SEARCH     = re.compile('^(show|select|desc)', re.IGNORECASE)
-WRITE_SEARCH    = re.compile('^(insert|update|create|alter|replace|rename|delete)', re.IGNORECASE)
-LOCKED_SEARCH   = re.compile('^(locked|waiting for table level lock|waiting for table metadata lock)', re.IGNORECASE)
-#OPENING_SEARCH  = re.compile('^opening table', re.IGNORECASE)
-#CLOSING_SEARCH  = re.compile('^closing table', re.IGNORECASE)
+
+READ_SEARCH     = ('show', 'select', 'desc')
+WRITE_SEARCH    = ('insert', 'update', 'create', 'alter', 'replace', 'rename', 'delete')
+LOCKED_SEARCH   = ('locked', 'waiting for table level lock', 'waiting for table metadata lock')
 
 class mydb():
     conn            = None
@@ -419,8 +418,9 @@ def process_row(results):
     calculate_sleepers = False
     if not args.id_only:
         num_reads           = num_writes = num_locked = num_closing = num_opening = num_past_long_query = num_sleepers = 0
-        user_count          = {}
+        user_count          = defaultdict(int)
 
+    ## the state field would be 'User sleep', so is 'sleep' found in the state argument given ?
     if (args.command and args.command.lower() == 'sleep') or (args.state and 'sleep' in args.state.lower()):
         calculate_sleepers = True
     
@@ -432,17 +432,14 @@ def process_row(results):
             print(row['id'])
             continue
 
-        if row['user'] not in user_count:
-            user_count[row['user']] = 1
-        else:
-            user_count[row['user']] += 1
-
-        ## every once in a while these come back as None
-        ## TypeError: expected string or buffer
+        user_count[row['user']] += 1
+        
         if row['info']:
-            info = row['info'][:7].lower()
+            ## pull the first word of the query out - newline, tab or whitespace, and lowercase it.
+            s_info = row['info'].split()[0].lower()
         else:
-            info = ''
+            row['info'] = ''
+            s_info = ''
 
         if not row['state']:
             row['state'] = ''
@@ -450,15 +447,14 @@ def process_row(results):
         ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
 
-        if READ_SEARCH.search(info):    num_reads += 1
-        if WRITE_SEARCH.search(info):   num_writes += 1
+        if s_info in READ_SEARCH:   num_reads += 1
+        if s_info in WRITE_SEARCH:  num_writes += 1
+        if s_info in LOCKED_SEARCH: num_locked += 1
 
-        if row['state'] == 'Copying to tmp table on disk': num_writes += 1
-
-        if LOCKED_SEARCH.search(row['state']):          num_locked  += 1
-        if row['state'].startswith('Opening table'):    num_opening += 1
-        if row['state'].startswith('closing table'):    num_closing += 1
-        if int(row['time']) > long_query_time:          num_past_long_query += 1
+        if row['state'] == 'Copying to tmp table on disk':  num_writes += 1
+        if row['state'].startswith('Opening table'):        num_opening += 1
+        if row['state'].startswith('closing table'):        num_closing += 1
+        if int(row['time']) > long_query_time:              num_past_long_query += 1
 
         if calculate_sleepers and ('sleep' in row['command'].lower()) or ('sleep' in row['state'].lower()):
             num_sleepers += 1
@@ -631,7 +627,7 @@ def main():
 
     if args.loop_second_interval > 0:
         counter = 0
-        while True:
+        while 1:
             counter += 1
             if pslist(sql, counter):
                 counter = 0
