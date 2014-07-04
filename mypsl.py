@@ -30,6 +30,8 @@ from collections import defaultdict
 from distutils.spawn import find_executable
 from socket import gethostname
 
+PROG_START = time.time()
+
 '''
     Requires MySQLdb, colorama, and yaml
 
@@ -454,7 +456,7 @@ def process_row(results):
         if row['state'] == 'Copying to tmp table on disk':  num_writes += 1
         if row['state'].startswith('Opening table'):        num_opening += 1
         if row['state'].startswith('closing table'):        num_closing += 1
-        if int(row['time']) > long_query_time:              num_past_long_query += 1
+        if int(row['time']) > LONG_QUERY_TIME:              num_past_long_query += 1
 
         if calculate_sleepers and ('sleep' in row['command'].lower()) or ('sleep' in row['state'].lower()):
             num_sleepers += 1
@@ -498,54 +500,54 @@ def pslist(sql, counter):
 
         _nums               = process_row(res)
 
-        if not args.id_only:
-            num_reads           = _nums['num_reads']
-            num_writes          = _nums['num_writes']
-            num_locked          = _nums['num_locked']
-            num_closing         = _nums['num_closing']
-            num_opening         = _nums['num_opening']
-            num_sleepers        = _nums['num_sleepers']
-            num_past_long_query = _nums['num_past_long_query']
-            user_count          = _nums['user_count']
+        if args.id_only:
+            ## then we're done here.
+            return True
 
-            ## format total processes
-            if num_processes >= PROCESS_THRESHOLD_CRIT:
-                num_processes = color_val(num_processes, Fore.RED)
-            elif num_processes >= PROCESS_THRESHOLD_WARN:
-                num_processes = color_val(num_processes, Fore.YELLOW)
-            else:
-                num_processes = color_val(num_processes, Fore.CYAN)
+        num_reads           = _nums['num_reads']
+        num_writes          = _nums['num_writes']
+        num_locked          = _nums['num_locked']
+        num_closing         = _nums['num_closing']
+        num_opening         = _nums['num_opening']
+        num_sleepers        = _nums['num_sleepers']
+        num_past_long_query = _nums['num_past_long_query']
+        user_count          = _nums['user_count']
 
-            ## format the number of queries past the long query time
-            if num_past_long_query > 0:
-                num_past_long_query = color_val(num_past_long_query, Fore.RED)
-            else:
-                num_past_long_query = color_val(num_past_long_query, Fore.CYAN)
+        ## format total processes
+        if num_processes >= PROCESS_THRESHOLD_CRIT:
+            num_processes = color_val(num_processes, Fore.RED)
+        elif num_processes >= PROCESS_THRESHOLD_WARN:
+            num_processes = color_val(num_processes, Fore.YELLOW)
+        else:
+            num_processes = color_val(num_processes, Fore.CYAN)
 
-            ## format the number of sleepers
-            if num_sleepers >= SLEEPER_THRESHOLD_CRIT:
-                num_sleepers = color_val(num_sleepers, Fore.RED)
-            elif num_sleepers >= SLEEPER_THRESHOLD_WARN:
-                num_sleepers = color_val(num_sleepers, Fore.YELLOW)
-            else:
-                num_sleepers = color_val(num_sleepers, Fore.CYAN)
+        ## format the number of queries past the long query time
+        if num_past_long_query > 0:
+            num_past_long_query = color_val(num_past_long_query, Fore.RED)
+        else:
+            num_past_long_query = color_val(num_past_long_query, Fore.CYAN)
 
-            print("\n\t({0}) PROCESSES: {1}, SLEEPERS: {2}, LOCKED: {3}, READS: {4}, WRITES: {5}, CLOSING: {6}, OPENING: {7}, PAST LQT: {8}"
-                .format(color_val(get_hostname(), Fore.GREEN), num_processes, num_sleepers, color_val(num_locked, Fore.CYAN), 
-                    color_val(num_reads, Fore.CYAN), color_val(num_writes, Fore.CYAN), color_val(num_closing, Fore.CYAN), 
-                    color_val(num_opening, Fore.CYAN), num_past_long_query))
+        ## format the number of sleepers
+        if num_sleepers >= SLEEPER_THRESHOLD_CRIT:
+            num_sleepers = color_val(num_sleepers, Fore.RED)
+        elif num_sleepers >= SLEEPER_THRESHOLD_WARN:
+            num_sleepers = color_val(num_sleepers, Fore.YELLOW)
+        else:
+            num_sleepers = color_val(num_sleepers, Fore.CYAN)
 
-            ## this is ok, but the next one sorts by occurrence
-            #mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(v, Fore.CYAN))) for (k, v) in user_count.iteritems()) )
-            mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(user_count[k], Fore.CYAN))) \
-                for k in sorted(user_count, key=user_count.get, reverse=True)) )
+        print("\n\t({0}) PROCESSES: {1}, SLEEPERS: {2}, LOCKED: {3}, READS: {4}, WRITES: {5}, CLOSING: {6}, OPENING: {7}, PAST LQT: {8}"
+            .format(color_val(get_hostname(), Fore.GREEN), num_processes, num_sleepers, color_val(num_locked, Fore.CYAN), 
+                color_val(num_reads, Fore.CYAN), color_val(num_writes, Fore.CYAN), color_val(num_closing, Fore.CYAN), 
+                color_val(num_opening, Fore.CYAN), num_past_long_query))
 
-            print("\t({0}) {1}".format(color_val("Users", Fore.GREEN), mystr))
+        ## this is ok, but the next one sorts by occurrence
+        #mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(v, Fore.CYAN))) for (k, v) in user_count.iteritems()) )
+        mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(user_count[k], Fore.CYAN))) \
+            for k in sorted(user_count, key=user_count.get, reverse=True)) )
 
-            show_processing_time(start, time.time())
-
-            print()
-
+        print("\t({0}) {1}".format(color_val("Users", Fore.GREEN), mystr))
+        show_processing_time(start, time.time())
+        print()
         return True
     else:
         ## just sending a message to the terminal to let the user that the script is still working, and isn't stuck.
@@ -561,6 +563,14 @@ def main():
     order_by        = []
     order_by_str    = ''
 
+    if args.id_only and args.kill:
+        print(color_val("ERROR: Cannot specify id only (-i, --id) with kill!", Fore.RED + Style.BRIGHT))
+        sys.exit(1)
+
+    if args.kill and args.default:
+        print(color_val("ERROR: Cannot kill using defaults!", Fore.RED + Style.BRIGHT))
+        sys.exit(1)
+
     if args.kill:
         if not args.kill_yes:
             ans = raw_input(color_val("Are you sure you want to kill queries? ", Style.BRIGHT))
@@ -571,9 +581,9 @@ def main():
     select_fields   = ['id']
 
     if not args.id_only:
-        select_fields += ['user', 'host', 'db', 'command', 'time', 'state', 'info']
+        select_fields.extend(['user', 'host', 'db', 'command', 'time', 'state', 'info'])
 
-    sql         = "SELECT {0} FROM processlist".format(', '.join(select_fields))
+    sql = "SELECT {0} FROM processlist".format(', '.join(select_fields))
 
     if args.default:
         where.append("(command = 'Query' OR command = 'Connect')")
@@ -604,10 +614,6 @@ def main():
         print(color_val("ERROR: Cannot kill without specifying criteria!", Fore.RED + Style.BRIGHT))
         sys.exit(1)
 
-    if args.kill and args.default:
-        print(color_val("ERROR: Cannot kill using defaults!", Fore.RED + Style.BRIGHT))
-        sys.exit(1)
-
     where.append("command != 'Binlog Dump'")
     where.append("(db != 'information_schema' OR db IS NULL)") ## confuses me why I had to add OR db IS NULL
 
@@ -615,14 +621,15 @@ def main():
         where.append("user != 'system user'")
 
     if where:
-        where_str       = ' WHERE {0}'.format(' AND '.join(where))
+        where_str = ' WHERE {0}'.format(' AND '.join(where))
 
     if order_by:
-        order_by_str    = ' ORDER BY {0}'.format(', '.join(order_by))
+        order_by_str = ' ORDER BY {0}'.format(', '.join(order_by))
 
-    sql = sql + where_str + order_by_str
+    sql = ''.join([sql, where_str, order_by_str])
 
     if args.debug:
+        show_processing_time(PROG_START, time.time(), 'Program Preparation')
         print("SQL: {0}".format(color_val(sql, Fore.CYAN)))
 
     if args.loop_second_interval > 0:
@@ -660,7 +667,7 @@ if not HAS_YAML and args.connect_config:
 
 db      = mydb()
 
-long_query_time     = get_long_query_time()
+LONG_QUERY_TIME     = get_long_query_time()
 
 if __name__ == "__main__":
     main()
