@@ -114,6 +114,8 @@ class mydb():
                 socket = get_mysql_default('socket')
                 if socket:
                     self.connect_args['unix_socket'] = socket
+                    del self.connect_args['host']
+                    del self.connect_args['port']
                 else:
                     print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
 
@@ -237,7 +239,7 @@ def parse_args():
     config_group.add_argument('-l', '--loop', dest='loop_second_interval', type=int, default=0,
         help='Time in seconds between getting the process list.')
     config_group.add_argument('-dft', '--default', dest='default', action='store_true',
-        help='Run with defaults. Loop internal: 2 seconds, command like query or connect, order by time asc, id asc.')
+        help='Run with defaults. Loop internal: 3 seconds, command like query or connect, order by time asc, id asc, truncate query to 1000.')
     config_group.add_argument('-c', '--command', dest='command', type=str,
         help='Lookup processes running as this command.')
     config_group.add_argument('-s', '--state', dest='state', type=str,
@@ -334,7 +336,7 @@ def get_max_connections():
     return 0
 
 def get_num_sleepers():
-    sql = "SELECT count(id) AS num_sleepers FROM processlist WHERE command = 'Sleep' OR state = 'User sleep'"
+    sql = "SELECT SQL_NO_CACHE count(id) AS num_sleepers FROM processlist WHERE command = 'Sleep' OR state = 'User sleep'"
     cur = db.query(sql)
     res = cur.fetchone()
     if res and 'num_sleepers' in res:
@@ -439,6 +441,8 @@ def process_row(results):
         if row['info']:
             ## pull the first word of the query out - newline, tab or whitespace, and lowercase it.
             s_info = row['info'].split()[0].lower()
+            if args.trim_info and len(row['info']) > 1000:
+                row['info'] = "%s ..." % row['info'][:1000]
         else:
             row['info'] = ''
             s_info = ''
@@ -449,20 +453,20 @@ def process_row(results):
         ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
 
-        if s_info in READ_SEARCH:   num_reads += 1
-        if s_info in WRITE_SEARCH:  num_writes += 1
-        if s_info in LOCKED_SEARCH: num_locked += 1
+        if s_info:
+            if s_info in READ_SEARCH:   num_reads += 1
+            if s_info in WRITE_SEARCH:  num_writes += 1
 
-        if row['state'] == 'Copying to tmp table on disk':  num_writes += 1
-        if row['state'].startswith('Opening table'):        num_opening += 1
-        if row['state'].startswith('closing table'):        num_closing += 1
-        if int(row['time']) > LONG_QUERY_TIME:              num_past_long_query += 1
+        if row['state']:
+            if row['state'] in LOCKED_SEARCH:                   num_locked += 1
+            if row['state'] == 'Copying to tmp table on disk':  num_writes += 1
+            if row['state'].startswith('Opening table'):        num_opening += 1
+            if row['state'].startswith('closing table'):        num_closing += 1
+
+        if int(row['time']) > LONG_QUERY_TIME: num_past_long_query += 1
 
         if calculate_sleepers and ('sleep' in row['command'].lower()) or ('sleep' in row['state'].lower()):
             num_sleepers += 1
-
-        if args.trim_info and len(row['info']) > 1000:
-            row['info'] = "%s ..." % row['info'][:1000]
 
         print(OUT_FORMAT.format(row['id'], row['user'], row['host'], row['db'], row['command'], row['time'], row['state'], row['info']))
 
@@ -480,7 +484,7 @@ def process_row(results):
         'user_count':           user_count
     }
 
-def pslist(sql, counter):
+def pslist(sql, counter=0):
     start = time.time()
     cur = db.query(sql)
     res = cur.fetchall()
@@ -542,10 +546,10 @@ def pslist(sql, counter):
 
         ## this is ok, but the next one sorts by occurrence
         #mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(v, Fore.CYAN))) for (k, v) in user_count.iteritems()) )
-        mystr = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(user_count[k], Fore.CYAN))) \
+        user_str = "{0}".format( ', '.join("%s: %s" % (k, "{0}".format(color_val(user_count[k], Fore.CYAN))) \
             for k in sorted(user_count, key=user_count.get, reverse=True)) )
 
-        print("\t({0}) {1}".format(color_val("Users", Fore.GREEN), mystr))
+        print("\t({0}) {1}".format(color_val("Users", Fore.GREEN), user_str))
         show_processing_time(start, time.time())
         print()
         return True
@@ -557,11 +561,11 @@ def pslist(sql, counter):
 
 def main():
     global USER_WHERE
-    sql             = ''
     where           = []
-    where_str       = ''
     order_by        = []
+    where_str       = ''
     order_by_str    = ''
+    select_fields   = ['id']
 
     if args.id_only and args.kill:
         print(color_val("ERROR: Cannot specify id only (-i, --id) with kill!", Fore.RED + Style.BRIGHT))
@@ -578,23 +582,17 @@ def main():
                 print("Ok, then only use --kill when you are sure you want to kill stuff.")
                 sys.exit(0)
 
-    select_fields   = ['id']
-
     if not args.id_only:
         select_fields.extend(['user', 'host', 'db', 'command', 'time', 'state', 'info'])
 
-    sql = "SELECT {0} FROM processlist".format(', '.join(select_fields))
+    sql = "SELECT SQL_NO_CACHE {0} FROM processlist".format(', '.join(select_fields))
 
     if args.default:
         where.append("(command = 'Query' OR command = 'Connect')")
         args.loop_second_interval   = 3
         args.ignore_system_user     = True
         args.trim_info              = True
-
-        order_by    = [
-            'time ASC',
-            'id ASC'
-        ]
+        order_by                    = ['time ASC', 'id ASC']
     else:
         if args.command:
             where.append("command = '{0}'".format(args.command))
@@ -641,7 +639,7 @@ def main():
 
             time.sleep(args.loop_second_interval)
     else:
-        pslist(sql, 0)
+        pslist(sql)
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
