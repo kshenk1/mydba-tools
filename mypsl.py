@@ -33,7 +33,7 @@ from socket import gethostname
 PROG_START = time.time()
 
 '''
-    Requires MySQLdb, colorama, and yaml
+    Requires (MySQLdb for python 2x, pymysql for python 3x), colorama, and yaml
 
     Some output is sent to stderr so you can hide this while running in the terminal if you want.
     --> print("the message", file=sys.stderr)
@@ -54,12 +54,23 @@ PROG_START = time.time()
 
 '''
 
-try:
-    import MySQLdb
-    import MySQLdb.cursors
-    HAS_MYSQLDB = True
-except ImportError:
-    HAS_MYSQLDB = False
+if sys.version_info < (3,):
+    ## if python version is less than 3, try to import MySQLdb
+    try:
+        import MySQLdb
+        import MySQLdb.cursors
+        HAS_MYSQL = True
+        MYSQL_MOD = MySQLdb
+    except ImportError:
+        HAS_MYSQL = False
+else:
+    ## attempt to import pymysql
+    try:
+        import pymysql
+        HAS_MYSQL = True
+        MYSQL_MOD = pymysql
+    except ImportError:
+        HAS_MYSQL = False
 
 try:
     from colorama import init, Fore, Style
@@ -100,7 +111,7 @@ class mydb():
         self.connect_args = {
             'db':           'information_schema',
             'charset':      args.charset,
-            'cursorclass':  MySQLdb.cursors.DictCursor,
+            'cursorclass':  MYSQL_MOD.cursors.DictCursor,
             'host':         args.host,
             'port':         args.port,
             'user':         args.user,
@@ -119,13 +130,13 @@ class mydb():
                 else:
                     print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
 
-        MySQLdb.paramstyle = 'pyformat'
+        MYSQL_MOD.paramstyle = 'pyformat'
 
     def connect(self):
         try:
-            self.conn = MySQLdb.connect(**self.connect_args)
-        except MySQLdb.Error, e:
-            print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
+            self.conn = MYSQL_MOD.connect(**self.connect_args)
+        except MYSQL_MOD.Error:
+            #print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
 
             msg = "ERROR: Unable to connect to mysql"
             if 'host' in self.connect_args:
@@ -147,7 +158,7 @@ class mydb():
             else:
                 self.cursor.execute(sql)
 
-        except (AttributeError, MySQLdb.OperationalError):
+        except (AttributeError, MYSQL_MOD.OperationalError):
             self.connect()
             self.query(sql, args)
 
@@ -643,16 +654,14 @@ def main():
 
 ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-## init colorama - doesn't appear to be required (works without this call), but it's in
-## the docs... so...
-init()
-
-if not HAS_MYSQLDB:
-    print(color_val("ERROR: Unable to import MySQLdb!", Fore.RED + Style.BRIGHT))
+if not HAS_COLOR:
+    print("ERROR: Unable to import colorama!")
     sys.exit(1)
 
-if not HAS_COLOR:
-    print(color_val("ERROR: Unable to import colorama!", Fore.RED + Style.BRIGHT))
+init()
+
+if not HAS_MYSQL:
+    print(color_val("ERROR: Unable to import {0}!".format(MYSQL_MOD), Fore.RED + Style.BRIGHT))
     sys.exit(1)
 
 signal.signal(signal.SIGINT, sig_handler)
