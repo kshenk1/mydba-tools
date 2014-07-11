@@ -222,7 +222,7 @@ def find_my_cnf():
     return None
 
 def parse_args():
-    parser = argparse.ArgumentParser(description=color_val('MySQL Process list watcher & query killer.', Fore.YELLOW + Style.BRIGHT),
+    parser = argparse.ArgumentParser(description=color_val('MySQL Process list watcher & query killer.', Fore.CYAN + Style.BRIGHT),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     con_opt_group   = parser.add_argument_group(color_val('Connection Options', Fore.YELLOW + Style.BRIGHT))
@@ -305,7 +305,7 @@ def print_header():
     else:
         ct_str = color_val(ct, Fore.CYAN)
 
-    bar = "-"*40
+    bar = "-"*35
     header = "%s%s%s %s%s :: %s :: Threads (%s / %s) %s%s%s" % \
         (Fore.YELLOW, bar, Fore.GREEN, get_hostname(), Fore.RESET, get_now_date(), ct_str, mc, Fore.YELLOW, bar, Fore.RESET)
 
@@ -458,8 +458,8 @@ def process_row(results):
             row['info'] = ''
             s_info = ''
 
-        if not row['state']:
-            row['state'] = ''
+        if not row['state']:    row['state'] = ''
+        if not row['db']:       row['db'] = ''
 
         ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
@@ -469,7 +469,7 @@ def process_row(results):
             if s_info in WRITE_SEARCH:  num_writes += 1
 
         if row['state']:
-            if row['state'] in LOCKED_SEARCH:                   num_locked += 1
+            if row['state'].lower() in LOCKED_SEARCH:           num_locked += 1
             if row['state'] == 'Copying to tmp table on disk':  num_writes += 1
             if row['state'].startswith('Opening table'):        num_opening += 1
             if row['state'].startswith('closing table'):        num_closing += 1
@@ -478,6 +478,15 @@ def process_row(results):
 
         if calculate_sleepers and ('sleep' in row['command'].lower()) or ('sleep' in row['state'].lower()):
             num_sleepers += 1
+
+        #print("id: %s" % row['id'])
+        #print("user: %s" % row['user'])
+        #print("host: %s" % row['host'])
+        #print("db: %s" % row['db'])
+        #print("command: %s" % row['command'])
+        #print("time: %s" % row['time'])
+        #print("state: %s" % row['state'])
+        #print("info: %s" % row['info'])
 
         print(OUT_FORMAT.format(row['id'], row['user'], row['host'], row['db'], row['command'], row['time'], row['state'], row['info']))
 
@@ -669,7 +678,7 @@ signal.signal(signal.SIGINT, sig_handler)
 args    = parse_args()
 
 if not HAS_YAML and args.connect_config:
-    print(color_val('ERROR: Unable to import yaml!', Fore.RED + Style.BRIGHT))
+    print(color_val('ERROR: Unable to import yaml! You will not be able to use the config option.', Fore.RED + Style.BRIGHT))
     sys.exit(1)
 
 db      = mydb()
