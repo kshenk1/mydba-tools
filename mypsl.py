@@ -34,11 +34,13 @@ from socket import gethostname
 PROG_START = time.time()
 
 '''
-    Requires (MySQLdb for python 2x, pymysql for python 3x), colorama, and yaml
+    Requires pymysql, colorama, and situationally yaml and argcomplete
 
     argcomplete is supported here as well, if the module is installed. See:
     https://pypi.python.org/pypi/argcomplete for specific information about argcomplete.
     How this is used is explained below.
+
+    Yaml is required if using the config option as well.
 
     Some output is sent to stderr so you can hide this while running in the terminal if you want.
     --> print("the message", file=sys.stderr)
@@ -66,23 +68,12 @@ PROG_START = time.time()
 
 '''
 
-if sys.version_info < (3,):
-    ## if python version is less than 3, try to import MySQLdb
-    try:
-        import MySQLdb
-        import MySQLdb.cursors
-        HAS_MYSQL = True
-        MYSQL_MOD = MySQLdb
-    except ImportError:
-        HAS_MYSQL = False
-else:
-    ## attempt to import pymysql
-    try:
-        import pymysql
-        HAS_MYSQL = True
-        MYSQL_MOD = pymysql
-    except ImportError:
-        HAS_MYSQL = False
+
+try:
+    import pymysql
+    HAS_MYSQL = True
+except ImportError:
+    HAS_MYSQL = False
 
 try:
     import argcomplete
@@ -130,7 +121,7 @@ class mydb():
         self.connect_args = {
             'db':           'information_schema',
             'charset':      args.charset,
-            'cursorclass':  MYSQL_MOD.cursors.DictCursor,
+            'cursorclass':  pymysql.cursors.DictCursor,
             'host':         args.host,
             'port':         args.port,
             'user':         args.user,
@@ -149,12 +140,12 @@ class mydb():
                 else:
                     print(color_val("Unable to use the socket file, will resort to host/port", Fore.RED + Style.BRIGHT), file=sys.stderr)
 
-        MYSQL_MOD.paramstyle = 'pyformat'
+        pymysql.paramstyle = 'pyformat'
 
     def connect(self):
         try:
-            self.conn = MYSQL_MOD.connect(**self.connect_args)
-        except MYSQL_MOD.Error:
+            self.conn = pymysql.connect(**self.connect_args)
+        except pymysql.Error:
             #print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
 
             msg = "ERROR: Unable to connect to mysql"
@@ -177,7 +168,7 @@ class mydb():
             else:
                 self.cursor.execute(sql)
 
-        except (AttributeError, MYSQL_MOD.OperationalError):
+        except (AttributeError, pymysql.OperationalError):
             self.connect()
             self.query(sql, args)
 
@@ -698,7 +689,7 @@ if not HAS_COLOR:
 init()
 
 if not HAS_MYSQL:
-    print(color_val("ERROR: Unable to import a MySQL driver!", Fore.RED + Style.BRIGHT))
+    print(color_val("ERROR: Unable to import pymysql!", Fore.RED + Style.BRIGHT))
     sys.exit(1)
 
 signal.signal(signal.SIGINT, sig_handler)
