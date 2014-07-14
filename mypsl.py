@@ -112,6 +112,7 @@ INFO_TRIM_LENGTH        = 1000
 USER_WHERE      = []
 HOSTNAME        = None
 OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
+MYPSL_CONFIGS   = os.path.join(os.environ['HOME'], '.mypsl')
 
 READ_SEARCH     = ('show', 'select', 'desc')
 WRITE_SEARCH    = ('insert', 'update', 'create', 'alter', 'replace', 'rename', 'delete')
@@ -242,10 +243,9 @@ def find_my_cnf():
 def _get_config_files(prefix, parsed_args, **kwargs):
     if not HAS_ARGCOMPLETE:
         return False
-    path = os.path.join(os.environ['HOME'], '.mypsl/')
-    if not os.path.isdir(path):
+    if not os.path.isdir(MYPSL_CONFIGS):
         return False
-    return next(os.walk(path))[2]
+    return next(os.walk(MYPSL_CONFIGS))[2]
 
 def parse_args():
     parser = argparse.ArgumentParser(description=color_val('MySQL Process list watcher & query killer.', Fore.CYAN + Style.BRIGHT),
@@ -268,7 +268,7 @@ def parse_args():
     con_opt_group.add_argument('-ch', '--charset', dest='charset', type=str, default='utf8',
         help='Charset to use with the database.')
     con_opt_group.add_argument('--config', dest='connect_config', type=str, default=False,
-        help='Load connection configuration from a file in {0}. Just provide the filename. '.format(os.path.join(os.environ['HOME'], '.mypsl/')) + \
+        help='Load connection configuration from a file in {0}. Just provide the filename. '.format(MYPSL_CONFIGS) + \
         'This will override any other connection information provided').completer = _get_config_files
 
     ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -312,7 +312,8 @@ def parse_args():
     kill_group.add_argument('-kl', '--kill_log', dest='kill_log', default='/var/log/killed_queries.log',
         help="Where to log killed queries to, granting permissions to write to this file.")
 
-    argcomplete.autocomplete(parser)
+    if HAS_ARGCOMPLETE:
+        argcomplete.autocomplete(parser)
     return parser.parse_args()
 
 def myp(d):
