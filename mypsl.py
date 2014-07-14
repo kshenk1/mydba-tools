@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# PYTHON_ARGCOMPLETE_OK
 
 '''
     mypsl :: MySQL process list watcher and query killer
@@ -35,6 +36,10 @@ PROG_START = time.time()
 '''
     Requires (MySQLdb for python 2x, pymysql for python 3x), colorama, and yaml
 
+    argcomplete is supported here as well, if the module is installed. See:
+    https://pypi.python.org/pypi/argcomplete for specific information about argcomplete.
+    How this is used is explained below.
+
     Some output is sent to stderr so you can hide this while running in the terminal if you want.
     --> print("the message", file=sys.stderr)
     i.e. mypsl.py --options 2>/dev/null
@@ -43,7 +48,7 @@ PROG_START = time.time()
 
     If using the --config option, 
         - The config file will override any connection information provided in other options.
-        - the ".mypsl" directory must already exist
+        - the "$HOME/.mypsl" directory must already exist
         - the config file must be in that directory and be readable
         - you will provide only the filename - not the full path
         - this must be a valid yaml file with just the connection information: i.e. 
@@ -51,6 +56,13 @@ PROG_START = time.time()
             port: 1234
             user: me
             passwd: mypassword
+
+    If argcomplete is installed, all options will autocomplete, but the --config option has more
+    functionality. If the $HOME/.mypsl directory exists and contains file, we'll auto-load the files available
+    and will auto-complete the filenames.
+    If you choose not to activate global completion, you will need to have this sourced into your environment (.bashrc/.bash_profile)
+    eval "$(register-python-argcomplete mypsl.py)"
+    Note: as explained on pypi, bash >= 4.2 is required, and your shell must be using it.
 
 '''
 
@@ -71,6 +83,12 @@ else:
         MYSQL_MOD = pymysql
     except ImportError:
         HAS_MYSQL = False
+
+try:
+    import argcomplete
+    HAS_ARGCOMPLETE = True
+except ImportError:
+    HAS_ARGCOMPLETE = False
 
 try:
     from colorama import init, Fore, Style
@@ -221,6 +239,14 @@ def find_my_cnf():
             return l
     return None
 
+def _get_config_files(prefix, parsed_args, **kwargs):
+    if not HAS_ARGCOMPLETE:
+        return False
+    path = os.path.join(os.environ['HOME'], '.mypsl/')
+    if not os.path.isdir(path):
+        return False
+    return next(os.walk(path))[2]
+
 def parse_args():
     parser = argparse.ArgumentParser(description=color_val('MySQL Process list watcher & query killer.', Fore.CYAN + Style.BRIGHT),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -243,7 +269,7 @@ def parse_args():
         help='Charset to use with the database.')
     con_opt_group.add_argument('--config', dest='connect_config', type=str, default=False,
         help='Load connection configuration from a file in {0}. Just provide the filename. '.format(os.path.join(os.environ['HOME'], '.mypsl/')) + \
-        'This will override any other connection information provided')
+        'This will override any other connection information provided').completer = _get_config_files
 
     ## ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -286,6 +312,7 @@ def parse_args():
     kill_group.add_argument('-kl', '--kill_log', dest='kill_log', default='/var/log/killed_queries.log',
         help="Where to log killed queries to, granting permissions to write to this file.")
 
+    argcomplete.autocomplete(parser)
     return parser.parse_args()
 
 def myp(d):
@@ -670,7 +697,7 @@ if not HAS_COLOR:
 init()
 
 if not HAS_MYSQL:
-    print(color_val("ERROR: Unable to import {0}!".format(MYSQL_MOD), Fore.RED + Style.BRIGHT))
+    print(color_val("ERROR: Unable to import a MySQL driver!", Fore.RED + Style.BRIGHT))
     sys.exit(1)
 
 signal.signal(signal.SIGINT, sig_handler)
