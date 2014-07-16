@@ -17,21 +17,20 @@ This version will run locally as well as connect to remote hosts granted you hav
 access to the server. If running locally, we'll attempt to use the mysql socket and default back to host/port. Remote connections
 will obviously always use host/port. See `mypsl.py --help` to get a full list of options and how to use them.
 
-`PyMysql` is required: https://pypi.python.org/pypi/PyMySQL
-
-`colorama` is required: https://pypi.python.org/pypi/colorama
-
-`yaml` is required if using the --config option: https://pypi.python.org/pypi/PyYAML
-
-`argcomplete` is not required, but leveraged if it's available and setup properly: https://pypi.python.org/pypi/argcomplete
+External modules used
+---------------------
+| `PyMysql`     | https://pypi.python.org/pypi/PyMySQL      | Required                      |
+| `colorama`    | https://pypi.python.org/pypi/colorama     | Required                      |
+| `yaml`        | https://pypi.python.org/pypi/PyYAML       | Required if using --config    |
+| `argcomplete` | https://pypi.python.org/pypi/argcomplete  | Not required - see docs       |
 
 a little more on argcomplete
 ----------------------------
-    If argcomplete is installed, all options will autocomplete, but the --config option has more
-    functionality. If the $HOME/.mypsl directory exists and contains files, we'll auto-load the files available
-    and will auto-complete the filenames.
-    If you choose not to activate global completion, you will need to have this sourced into your environment (.bashrc/.bash_profile)
-    eval "$(register-python-argcomplete mypsl.py)"
-    Note: as explained on pypi, bash >= 4.2 is required, and your shell must be using it
+If argcomplete is installed, all options will autocomplete, but the --config option has more
+functionality. If the $HOME/.mypsl directory exists and contains files, we'll auto-load the files available
+and will auto-complete the filenames.
+If you choose not to activate global completion, you will need to have this sourced into your environment (.bashrc/.bash_profile)
+eval "$(register-python-argcomplete mypsl.py)"
+Note: as explained on pypi, bash >= 4.2 is required, and your shell must be using it
 
 `watch_replication.sh` is pretty much just a stub at the moment. As I have time and the need arises I'll update this one more.
