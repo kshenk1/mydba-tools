@@ -20,6 +20,8 @@ will obviously always use host/port. See `mypsl.py --help` to get a full list of
 External modules used
 ---------------------
 
+| Module        | URL                                       | Required/Optional             |
+| --------------|-------------------------------------------|:------------------------------|
 | `PyMysql`     | https://pypi.python.org/pypi/PyMySQL      | Required                      |
 | `colorama`    | https://pypi.python.org/pypi/colorama     | Required                      |
 | `yaml`        | https://pypi.python.org/pypi/PyYAML       | Required if using --config    |
