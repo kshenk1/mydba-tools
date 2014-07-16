@@ -68,7 +68,6 @@ PROG_START = time.time()
 
 '''
 
-
 try:
     import pymysql
     HAS_MYSQL = True
@@ -103,7 +102,7 @@ INFO_TRIM_LENGTH        = 1000
 USER_WHERE      = []
 HOSTNAME        = None
 OUT_FORMAT      = "{0:<12}{1:16}{2:20}{3:22}{4:25}{5:<8}{6:28}{7:25}"
-MYPSL_CONFIGS   = os.path.join(os.environ['HOME'], '.mypsl')
+MYPSL_CONFIGS   = os.path.join(os.environ.get('HOME'), '.mypsl')
 
 READ_SEARCH     = ('show', 'select', 'desc')
 WRITE_SEARCH    = ('insert', 'update', 'create', 'alter', 'replace', 'rename', 'delete')
@@ -145,8 +144,8 @@ class mydb():
     def connect(self):
         try:
             self.conn = pymysql.connect(**self.connect_args)
-        except pymysql.Error:
-            #print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
+        except pymysql.Error as e:
+            print(color_val("MySQL Said: {0}: {1}".format(e.args[0],e.args[1]), Fore.RED + Style.BRIGHT))
 
             msg = "ERROR: Unable to connect to mysql"
             if 'host' in self.connect_args:
@@ -177,7 +176,7 @@ class mydb():
         return False
 
     def __load_from_config(self):
-        cfile = os.path.join(os.environ['HOME'], '.mypsl', args.connect_config)
+        cfile = os.path.join(MYPSL_CONFIGS, args.connect_config)
         if os.path.isfile(cfile):
             with open(cfile, 'r') as f:
                 self.connect_args.update(yaml.load(f))
