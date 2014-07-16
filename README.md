@@ -18,8 +18,11 @@ access to the server. If running locally, we'll attempt to use the mysql socket 
 will obviously always use host/port. See `mypsl.py --help` to get a full list of options and how to use them.
 
 `PyMysql` is required: https://pypi.python.org/pypi/PyMySQL
+
 `colorama` is required: https://pypi.python.org/pypi/colorama
+
 `yaml` is required if using the --config option: https://pypi.python.org/pypi/PyYAML
+
 `argcomplete` is not required, but leveraged if it's available and setup properly: https://pypi.python.org/pypi/argcomplete
 
 a little more on argcomplete
