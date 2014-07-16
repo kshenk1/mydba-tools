@@ -60,7 +60,7 @@ PROG_START = time.time()
             passwd: mypassword
 
     If argcomplete is installed, all options will autocomplete, but the --config option has more
-    functionality. If the $HOME/.mypsl directory exists and contains file, we'll auto-load the files available
+    functionality. If the $HOME/.mypsl directory exists and contains files, we'll auto-load the files available
     and will auto-complete the filenames.
     If you choose not to activate global completion, you will need to have this sourced into your environment (.bashrc/.bash_profile)
     eval "$(register-python-argcomplete mypsl.py)"
@@ -473,11 +473,11 @@ def process_row(results):
             if args.trim_info and len(row['info']) > 1000:
                 row['info'] = "%s ..." % row['info'][:1000]
         else:
-            row['info'] = ''
-            s_info = ''
+            row['info'] = '--'
+            s_info = '--'
 
-        if not row['state']:    row['state'] = ''
-        if not row['db']:       row['db'] = ''
+        if not row['state']:    row['state'] = '--'
+        if not row['db']:       row['db'] = '--'
 
         ## the port number doesn't really tell us much.
         row['host'] = row['host'].split(':')[0]
