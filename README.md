@@ -29,11 +29,11 @@ External modules used
 
 a little more on argcomplete
 ----------------------------
-If argcomplete is installed, all options will autocomplete, but the --config option has more
-functionality. If the $HOME/.mypsl directory exists and contains files, we'll auto-load the files available
+If argcomplete is installed, all options will autocomplete, but the `--config` option has more
+functionality. If the `$HOME/.mypsl` directory exists and contains files, we'll auto-load the files available
 and will auto-complete the filenames.
-If you choose not to activate global completion, you will need to have this sourced into your environment (.bashrc/.bash_profile)
-eval "$(register-python-argcomplete mypsl.py)"
+If you choose not to activate global completion, you will need to have this sourced into your environment (`.bashrc/.bash_profile`)
+`eval "$(register-python-argcomplete mypsl.py)"`
 Note: as explained on pypi, bash >= 4.2 is required, and your shell must be using it
 
 `watch_replication.sh` is pretty much just a stub at the moment. As I have time and the need arises I'll update this one more.
